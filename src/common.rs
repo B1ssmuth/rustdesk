@@ -1041,13 +1041,13 @@ pub fn get_custom_rendezvous_server(custom: String) -> String {
     if !config::PROD_RENDEZVOUS_SERVER.read().unwrap().is_empty() {
         return config::PROD_RENDEZVOUS_SERVER.read().unwrap().clone();
     }
-    "".to_owned()
+    "desk.yesapart.com".to_owned()
 }
 
 #[inline]
 pub fn get_api_server(api: String, custom: String) -> String {
     if Config::no_register_device() {
-        return "".to_owned();
+        return "https://desk.yesapart.com".to_owned();
     }
     let mut res = get_api_server_(api, custom);
     if res.ends_with('/') {
@@ -1081,7 +1081,7 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://admin.rustdesk.com".to_owned()
+    "https://desk.yesapart.com".to_owned()
 }
 
 #[inline]
