@@ -9,7 +9,7 @@ default-run = "yesdesk"
 rust-version = "1.75"
 
 [lib]
-name = "libyesdesk"
+name = "librustdesk"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
