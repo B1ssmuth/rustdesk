@@ -1,0 +1,16 @@
+name: Nuke Broken Link
+on: workflow_dispatch
+jobs:
+  nuke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Force delete gitlink
+        run: |
+          git config --global user.email "admin@yesapart.com"
+          git config --global user.name "FixBot"
+          git rm -rf --cached libs/hbb_common || echo "Already gone"
+          git commit -m "Remove phantom submodule link" || echo "Nothing to commit"
+          git push
