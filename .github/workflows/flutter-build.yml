@@ -145,7 +145,8 @@ jobs:
         run: |
           python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
           mv ./flutter/build/windows/x64/runner/Release ./rustdesk
-          # ОСТАВЛЯЕМ rustdesk.exe для скриптов MSI
+          # ХИТРЫЙ ХОД: Делаем YES_Desk.exe основным, но оставляем копию rustdesk.exe для препроцессора
+          cp ./rustdesk/rustdesk.exe ./rustdesk/YES_Desk.exe
           Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
           Expand-Archive usbmmidd_v2.zip -DestinationPath .
           mv -Force .\usbmmidd_v2 ./rustdesk
@@ -157,26 +158,34 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           pushd ./res/msi
-          # Скрипт preprocess.py теперь увидит rustdesk.exe и сработает штатно
+          # Скрипт видит rustdesk.exe и вытягивает версию
           python preprocess.py --arp -d ../../rustdesk
           nuget restore msi.sln
+          # Удаляем старый экзешник прямо перед финальной сборкой, чтобы MSI упаковал только YES_Desk.exe
+          rm ../../rustdesk/rustdesk.exe
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
           popd
           mkdir -p ./SignOutput
           mv ./res/msi/Package/bin/x64/Release/en-us/Package.msi ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
 
-      - name: Build self-extracted executable
+      - name: Build self-extracted executable (Portable)
         shell: bash
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          # Указываем пока старое имя для генератора
-          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          # Указываем генератору, что запускать надо именно YES_Desk.exe
+          python3 ./generate.py -f ../../rustdesk/ -o . -e YES_Desk.exe
           popd
-          # А вот теперь переименовываем всё для красоты в релизе
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
+
+      - name: Upload final binaries
+        if: env.UPLOAD_ARTIFACT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YES_Desk-Flutter-x64
+          path: SignOutput/YES_Desk-*
 
       - name: Publish Release
         uses: softprops/action-gh-release@v1
@@ -222,12 +231,12 @@ jobs:
       - name: Build rustdesk
         shell: cmd
         run: |
-          :: Включаем окружение MSVC для x86, чтобы hwcodec нашел SDK
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars32.bat"
           python3 res/inline-sciter.py
           cargo build --features inline,vram,hwcodec --release --bins --target ${{ matrix.job.target }}
           if not exist Release mkdir Release
-          copy target\${{ matrix.job.target }}\release\rustdesk.exe Release\rustdesk.exe
+          # Копируем сразу с новым именем
+          copy target\${{ matrix.job.target }}\release\rustdesk.exe Release\YES_Desk.exe
           powershell Invoke-WebRequest -Uri https://github.com/c-smile/sciter-sdk/raw/master/bin.win/x32/sciter.dll -OutFile ./Release/sciter.dll
 
       - name: Build self-extracted executable
@@ -235,10 +244,18 @@ jobs:
         run: |
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          python3 ./generate.py -f ../../Release/ -o . -e ../../Release/rustdesk.exe
+          # Внутри папки Release теперь только YES_Desk.exe
+          python3 ./generate.py -f ../../Release/ -o . -e YES_Desk.exe
           popd
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.exe
+
+      - name: Upload final binaries
+        if: env.UPLOAD_ARTIFACT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YES_Desk-Sciter-x86
+          path: SignOutput/YES_Desk-*
 
       - name: Publish Release
         uses: softprops/action-gh-release@v1
