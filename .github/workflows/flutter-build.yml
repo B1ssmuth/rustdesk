@@ -145,8 +145,6 @@ jobs:
         run: |
           python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
           mv ./flutter/build/windows/x64/runner/Release ./rustdesk
-          # ХИТРЫЙ ХОД: Делаем YES_Desk.exe основным, но оставляем копию rustdesk.exe для препроцессора
-          cp ./rustdesk/rustdesk.exe ./rustdesk/YES_Desk.exe
           Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
           Expand-Archive usbmmidd_v2.zip -DestinationPath .
           mv -Force .\usbmmidd_v2 ./rustdesk
@@ -155,33 +153,53 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Build msi
-        if: env.UPLOAD_ARTIFACT == 'true'
+        shell: pwsh
         run: |
+          # 1. Создаем YES_Desk.exe, но ОСТАВЛЯЕМ rustdesk.exe (он нужен препроцессору)
+          Copy-Item "./rustdesk/rustdesk.exe" "./rustdesk/YES_Desk.exe"
+          
+          # 2. ПАТЧИМ исходники MSI, чтобы они устанавливали файл как YES_Desk.exe
+          $msiFiles = Get-ChildItem -Path "./res/msi/Package" -Recurse -Include *.wxs,*.wxl,*.wixproj
+          foreach ($f in $msiFiles) {
+            (Get-Content $f.FullName) `
+              -replace 'rustdesk.exe', 'YES_Desk.exe' `
+              -replace 'RustDesk.exe', 'YES_Desk.exe' `
+              -replace 'RustDesk', 'YES Desk' `
+              | Set-Content $f.FullName -Encoding UTF8
+          }
+
           pushd ./res/msi
-          # Скрипт видит rustdesk.exe и вытягивает версию
+          # 3. Препроцессор создает переменные. Теперь он найдет rustdesk.exe и не упадет.
           python preprocess.py --arp -d ../../rustdesk
+          
+          # 4. Сборка самого MSI
           nuget restore msi.sln
-          # Удаляем старый экзешник прямо перед финальной сборкой, чтобы MSI упаковал только YES_Desk.exe
-          rm ../../rustdesk/rustdesk.exe
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
           popd
-          mkdir -p ./SignOutput
-          mv ./res/msi/Package/bin/x64/Release/en-us/Package.msi ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+          
+          # 5. Перенос результата
+          if (!(Test-Path "./SignOutput")) { New-Item -ItemType Directory -Path "./SignOutput" }
+          $msiPath = "./res/msi/Package/bin/x64/Release/en-us/Package.msi"
+          if (Test-Path $msiPath) {
+            Move-Item $msiPath "./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi"
+          } else {
+            Write-Error "MSI build failed: Package.msi not found"
+            exit 1
+          }
 
       - name: Build self-extracted executable (Portable)
         shell: bash
-        if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          # Указываем генератору, что запускать надо именно YES_Desk.exe
+          # Указываем запускать именно YES_Desk.exe
           python3 ./generate.py -f ../../rustdesk/ -o . -e YES_Desk.exe
           popd
+          mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
 
       - name: Upload final binaries
-        if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: YES_Desk-Flutter-x64
@@ -235,7 +253,6 @@ jobs:
           python3 res/inline-sciter.py
           cargo build --features inline,vram,hwcodec --release --bins --target ${{ matrix.job.target }}
           if not exist Release mkdir Release
-          # Копируем сразу с новым именем
           copy target\${{ matrix.job.target }}\release\rustdesk.exe Release\YES_Desk.exe
           powershell Invoke-WebRequest -Uri https://github.com/c-smile/sciter-sdk/raw/master/bin.win/x32/sciter.dll -OutFile ./Release/sciter.dll
 
@@ -244,14 +261,12 @@ jobs:
         run: |
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          # Внутри папки Release теперь только YES_Desk.exe
           python3 ./generate.py -f ../../Release/ -o . -e YES_Desk.exe
           popd
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.exe
 
       - name: Upload final binaries
-        if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: YES_Desk-Sciter-x86
