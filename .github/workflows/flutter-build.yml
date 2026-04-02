@@ -145,47 +145,10 @@ jobs:
         run: |
           python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
           mv ./flutter/build/windows/x64/runner/Release ./rustdesk
-          # Переименовываем сразу, чтобы инсталлер видел YES_Desk.exe
-          mv ./rustdesk/rustdesk.exe ./rustdesk/YES_Desk.exe
+          # ОСТАВЛЯЕМ rustdesk.exe для скриптов MSI
           Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
           Expand-Archive usbmmidd_v2.zip -DestinationPath .
           mv -Force .\usbmmidd_v2 ./rustdesk
-
-      - name: find Runner.res
-        continue-on-error: true
-        shell: bash
-        run: |
-          runner_res=$(find . -name "Runner.res");
-          if [ "$runner_res" != "" ]; then
-            cp $runner_res ./libs/portable/Runner.res;
-          fi
-
-      - name: Download RustDeskTempTopMostWindow artifacts
-        uses: actions/download-artifact@master
-        if: ${{ inputs.upload-artifact }}
-        with:
-          name: topmostwindow-artifacts
-          path: "./rustdesk"
-
-      - name: Upload unsigned
-        if: env.UPLOAD_ARTIFACT == 'true'
-        uses: actions/upload-artifact@master
-        with:
-          name: rustdesk-unsigned-windows-${{ matrix.job.arch }}
-          path: rustdesk
-
-      - name: Build self-extracted executable
-        shell: bash
-        if: env.UPLOAD_ARTIFACT == 'true'
-        run: |
-          sed -i '/dpiAware/d' res/manifest.xml
-          pushd ./libs/portable
-          pip3 install -r requirements.txt
-          # Используем переименованный файл YES_Desk.exe
-          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/YES_Desk.exe
-          popd
-          mkdir -p ./SignOutput
-          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
@@ -194,10 +157,26 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           pushd ./res/msi
+          # Скрипт preprocess.py теперь увидит rustdesk.exe и сработает штатно
           python preprocess.py --arp -d ../../rustdesk
           nuget restore msi.sln
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
-          mv ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+          popd
+          mkdir -p ./SignOutput
+          mv ./res/msi/Package/bin/x64/Release/en-us/Package.msi ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+
+      - name: Build self-extracted executable
+        shell: bash
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          # Указываем пока старое имя для генератора
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          popd
+          # А вот теперь переименовываем всё для красоты в релизе
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
 
       - name: Publish Release
         uses: softprops/action-gh-release@v1
@@ -236,26 +215,27 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: nightly-2023-10-13-${{ matrix.job.target }}
+          toolchain: nightly-2023-10-13
           targets: ${{ matrix.job.target }}
           components: "rustfmt"
 
       - name: Build rustdesk
+        shell: cmd
         run: |
+          :: Включаем окружение MSVC для x86, чтобы hwcodec нашел SDK
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars32.bat"
           python3 res/inline-sciter.py
-          # Собираем строго под целевой таргет x86
           cargo build --features inline,vram,hwcodec --release --bins --target ${{ matrix.job.target }}
-          mkdir -p ./Release
-          # ИСПРАВЛЕНИЕ: файл при указании target лежит в подпапке
-          mv ./target/${{ matrix.job.target }}/release/rustdesk.exe ./Release/YES_Desk.exe
-          curl -LJ -o ./Release/sciter.dll https://github.com/c-smile/sciter-sdk/raw/master/bin.win/x32/sciter.dll
+          if not exist Release mkdir Release
+          copy target\${{ matrix.job.target }}\release\rustdesk.exe Release\rustdesk.exe
+          powershell Invoke-WebRequest -Uri https://github.com/c-smile/sciter-sdk/raw/master/bin.win/x32/sciter.dll -OutFile ./Release/sciter.dll
 
       - name: Build self-extracted executable
         shell: bash
         run: |
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          python3 ./generate.py -f ../../Release/ -o . -e ../../Release/YES_Desk.exe
+          python3 ./generate.py -f ../../Release/ -o . -e ../../Release/rustdesk.exe
           popd
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.exe
@@ -267,4 +247,4 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            ./SignOutput/YES_Desk-*.exe
+            ./SignOutput/YES_Desk-*-sciter.exe
