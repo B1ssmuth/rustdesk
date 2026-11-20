@@ -32,11 +32,13 @@ class YesDeskIconButton extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.onPressed,
+    this.selected = false,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback? onPressed;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) => Tooltip(
@@ -44,8 +46,12 @@ class YesDeskIconButton extends StatelessWidget {
         child: TextButton(
           onPressed: onPressed,
           style: TextButton.styleFrom(
-            foregroundColor: YesDeskColors.of(context).muted,
-            minimumSize: const Size(34, 34),
+            backgroundColor:
+                selected ? YesDeskColors.of(context).selected : null,
+            foregroundColor: selected
+                ? YesDeskColors.of(context).accent
+                : YesDeskColors.of(context).muted,
+            minimumSize: const Size(40, 40),
             padding: const EdgeInsets.all(YesDeskSpace.sm),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
@@ -84,7 +90,7 @@ class YesDeskNavItem extends StatelessWidget {
             foregroundColor: selected ? colors.accent : colors.muted,
             disabledBackgroundColor: selected ? colors.selected : null,
             disabledForegroundColor: selected ? colors.accent : colors.muted,
-            minimumSize: const Size(0, 36),
+            minimumSize: const Size(0, 42),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             padding: const EdgeInsets.symmetric(
               horizontal: YesDeskSpace.sm,
@@ -98,7 +104,9 @@ class YesDeskNavItem extends StatelessWidget {
               Icon(icon, size: 17, semanticLabel: compact ? label : null),
               if (!compact) ...[
                 const SizedBox(width: YesDeskSpace.sm),
-                Flexible(child: Text(label)),
+                Flexible(
+                    child: Text(label,
+                        maxLines: 1, overflow: TextOverflow.ellipsis)),
               ],
             ],
           ),
@@ -154,7 +162,7 @@ class YesDeskCredential extends StatelessWidget {
           builder: (context, constraints) {
             final valueWidth = MediaQuery.textScalerOf(context).scale(112);
             final inline =
-                constraints.maxWidth >= valueWidth + 34 * controls.length;
+                constraints.maxWidth >= valueWidth + 40 * controls.length;
             return Flex(
               direction: inline ? Axis.horizontal : Axis.vertical,
               mainAxisSize: inline ? MainAxisSize.max : MainAxisSize.min,
@@ -259,7 +267,7 @@ class YesDeskWorkspaceLayout extends StatelessWidget {
     required this.header,
   });
 
-  static const wideWidth = 760.0;
+  static const wideWidth = 1040.0;
 
   final Widget main;
   final Widget support;
@@ -273,7 +281,7 @@ class YesDeskWorkspaceLayout extends StatelessWidget {
         final compact = constraints.maxWidth < wideWidth;
         final sideWidth = compact
             ? constraints.maxWidth
-            : (constraints.maxWidth * .29).clamp(228.0, 288.0);
+            : (constraints.maxWidth * .24).clamp(260.0, 312.0);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -315,5 +323,97 @@ class YesDeskWorkspaceLayout extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+/// Shared column geometry for the desktop device table and its header.
+class YesDeskDeviceRow extends StatelessWidget {
+  const YesDeskDeviceRow({
+    super.key,
+    required this.name,
+    required this.id,
+    required this.platform,
+    required this.status,
+    this.detail = '',
+    this.leading,
+    this.action,
+    this.header = false,
+  });
+
+  final String name;
+  final String id;
+  final String platform;
+  final String status;
+  final String detail;
+  final Widget? leading;
+  final Widget? action;
+  final bool header;
+
+  static bool showColumns(BuildContext context, double width) =>
+      width >= MediaQuery.textScalerOf(context).scale(570);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context).textTheme;
+    final colors = YesDeskColors.of(context);
+    final style = header ? theme.bodySmall : theme.bodyMedium;
+    Widget cell(String value) =>
+        Text(value, style: style, maxLines: 1, overflow: TextOverflow.ellipsis);
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final columns = showColumns(context, constraints.maxWidth);
+      final secondary = [if (!columns) id, if (detail.isNotEmpty) detail]
+          .where((part) => part.isNotEmpty)
+          .join(' · ');
+      return Ink(
+        decoration: BoxDecoration(
+          color: header ? colors.raised : colors.surface,
+          border: Border(bottom: BorderSide(color: colors.outline)),
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: header ? 36 : 50),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: YesDeskSpace.md,
+              vertical: YesDeskSpace.xs,
+            ),
+            child: Row(children: [
+              Expanded(
+                flex: 4,
+                child: Row(children: [
+                  if (leading != null) ...[
+                    leading!,
+                    const SizedBox(width: YesDeskSpace.sm),
+                  ],
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        cell(name),
+                        if (!header && secondary.isNotEmpty)
+                          Text(secondary,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.bodySmall),
+                      ],
+                    ),
+                  ),
+                ]),
+              ),
+              if (columns) ...[
+                const SizedBox(width: YesDeskSpace.sm),
+                Expanded(flex: 2, child: cell(id)),
+                const SizedBox(width: YesDeskSpace.sm),
+                Expanded(flex: 2, child: cell(platform)),
+              ],
+              const SizedBox(width: YesDeskSpace.sm),
+              Expanded(flex: columns ? 2 : 3, child: cell(status)),
+              SizedBox(width: 40, child: action),
+            ]),
+          ),
+        ),
+      );
+    });
   }
 }

@@ -18,6 +18,8 @@ import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_hbb/yesdesk/identity.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:get/get.dart';
 import 'package:get/get_rx/src/rx_workers/utils/debouncer.dart';
 import 'package:provider/provider.dart';
@@ -238,11 +240,11 @@ class ColorThemeExtension extends ThemeExtension<ColorThemeExtension> {
       highlight: Color.lerp(highlight, other.highlight, t),
       drag_indicator: Color.lerp(drag_indicator, other.drag_indicator, t),
       shadow: Color.lerp(shadow, other.shadow, t),
-      errorBannerBg: Color.lerp(shadow, other.errorBannerBg, t),
-      me: Color.lerp(shadow, other.me, t),
-      toastBg: Color.lerp(shadow, other.toastBg, t),
-      toastText: Color.lerp(shadow, other.toastText, t),
-      divider: Color.lerp(shadow, other.divider, t),
+      errorBannerBg: Color.lerp(errorBannerBg, other.errorBannerBg, t),
+      me: Color.lerp(me, other.me, t),
+      toastBg: Color.lerp(toastBg, other.toastBg, t),
+      toastText: Color.lerp(toastText, other.toastText, t),
+      divider: Color.lerp(divider, other.divider, t),
     );
   }
 }
@@ -610,6 +612,39 @@ class MyTheme {
     } else {
       return preference;
     }
+  }
+
+  static ThemeData desktopTheme(ThemeData base) {
+    final theme = YesDeskTheme.apply(base);
+    final colors = theme.extension<YesDeskColors>()!;
+    return theme.copyWith(extensions: [
+      colors,
+      ColorThemeExtension(
+        border: colors.outline,
+        border2: colors.outline,
+        border3: colors.outline,
+        highlight: colors.raised,
+        drag_indicator: colors.accent,
+        shadow: Colors.black38,
+        errorBannerBg: colors.selected,
+        me: colors.accent,
+        toastBg: colors.text,
+        toastText: colors.canvas,
+        divider: colors.outline,
+      ),
+      TabbarTheme(
+        selectedTabIconColor: colors.accent,
+        unSelectedTabIconColor: colors.muted,
+        selectedTextColor: colors.accent,
+        unSelectedTextColor: colors.text,
+        selectedIconColor: colors.text,
+        unSelectedIconColor: colors.muted,
+        dividerColor: colors.outline,
+        hoverColor: colors.raised,
+        closeHoverColor: colors.selected,
+        selectedTabBackgroundColor: colors.selected,
+      ),
+    ]);
   }
 
   static ColorThemeExtension color(BuildContext context) {
@@ -3715,7 +3750,7 @@ Size getIncomingOnlyHomeSize() {
   final magicWidth = isWindows ? 11.0 : 2.0;
   final magicHeight = 10.0;
   return imcomingOnlyHomeSize +
-      Offset(magicWidth, kDesktopRemoteTabBarHeight + magicHeight);
+      Offset(magicWidth, kDesktopWorkspaceTabBarHeight + magicHeight);
 }
 
 Size getIncomingOnlySettingsSize() {
@@ -3937,7 +3972,12 @@ void earlyAssert() {
   assert('\1' == '1');
 }
 
+bool get usesYesDeskDesktopIdentity =>
+    isDesktop && bind.mainGetAppNameSync() == YesDeskIdentity.name;
+
 void checkUpdate() {
+  // The inherited updater downloads upstream client binaries.
+  if (usesYesDeskDesktopIdentity) return;
   if (!isWeb) {
     if (!bind.isCustomClient()) {
       platformFFI.registerEventHandler(
@@ -4154,8 +4194,7 @@ Widget? buildAvatarWidget({
       width: size,
       height: size,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) =>
-          fallback ?? SizedBox.shrink(),
+      errorBuilder: (_, __, ___) => fallback ?? SizedBox.shrink(),
     ),
   );
 }

@@ -19,6 +19,7 @@ import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_hbb/yesdesk/identity.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -40,6 +41,7 @@ late List<String> kBootArgs;
 Future<void> main(List<String> args) async {
   earlyAssert();
   WidgetsFlutterBinding.ensureInitialized();
+  registerYesDeskLicenses();
 
   debugPrint("launch args: $args");
   kBootArgs = List.from(args);
@@ -292,6 +294,7 @@ void runConnectionManagerScreen() async {
     '',
     const DesktopServerPage(),
     MyTheme.currentThemeMode(),
+    desktopIdentity: true,
   );
   final hide = await bind.cmGetConfig(name: "hide_cm") == 'true';
   gFFI.serverModel.hideCm = hide;
@@ -357,16 +360,21 @@ hideCmWindow({bool isStartup = false}) async {
 void _runApp(
   String title,
   Widget home,
-  ThemeMode themeMode,
-) {
+  ThemeMode themeMode, {
+  bool desktopIdentity = false,
+}) {
   final botToastBuilder = BotToastInit();
   runApp(RefreshWrapper(
     builder: (context) => GetMaterialApp(
       navigatorKey: globalKey,
       debugShowCheckedModeBanner: false,
       title: title,
-      theme: MyTheme.lightTheme,
-      darkTheme: MyTheme.darkTheme,
+      theme: desktopIdentity
+          ? MyTheme.desktopTheme(MyTheme.lightTheme)
+          : MyTheme.lightTheme,
+      darkTheme: desktopIdentity
+          ? MyTheme.desktopTheme(MyTheme.darkTheme)
+          : MyTheme.darkTheme,
       themeMode: themeMode,
       home: home,
       localizationsDelegates: const [
@@ -391,7 +399,12 @@ void _runApp(
 void runInstallPage() async {
   await windowManager.ensureInitialized();
   await initEnv(kAppTypeMain);
-  _runApp('', const InstallPage(), MyTheme.currentThemeMode());
+  _runApp(
+    bind.mainGetAppNameSync(),
+    const InstallPage(),
+    MyTheme.currentThemeMode(),
+    desktopIdentity: true,
+  );
   WindowOptions windowOptions =
       getHiddenTitleBarWindowOptions(size: Size(800, 600), center: true);
   windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -502,8 +515,12 @@ class _AppState extends State<App> with WidgetsBindingObserver {
           title: isWeb
               ? '${bind.mainGetAppNameSync()} Web Client V2 (Preview)'
               : bind.mainGetAppNameSync(),
-          theme: MyTheme.lightTheme,
-          darkTheme: MyTheme.darkTheme,
+          theme: isDesktop
+              ? MyTheme.desktopTheme(MyTheme.lightTheme)
+              : MyTheme.lightTheme,
+          darkTheme: isDesktop
+              ? MyTheme.desktopTheme(MyTheme.darkTheme)
+              : MyTheme.darkTheme,
           themeMode: MyTheme.currentThemeMode(),
           home: isDesktop
               ? const DesktopTabPage()

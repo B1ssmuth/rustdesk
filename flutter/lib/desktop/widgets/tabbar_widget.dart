@@ -509,19 +509,27 @@ class _DesktopTabState extends State<DesktopTab>
 
   @override
   Widget build(BuildContext context) {
+    final workspace =
+        tabType == DesktopTabType.main || tabType == DesktopTabType.install;
+    final barHeight =
+        workspace ? kDesktopWorkspaceTabBarHeight : _kTabBarHeight;
     return Column(children: [
       Obx(() {
         if (stateGlobal.showTabBar.isTrue &&
             !(kUseCompatibleUiMode && isHideSingleItem())) {
           final showBottomDivider = _showTabBarBottomDivider(tabType);
           return SizedBox(
-            height: _kTabBarHeight,
+            height: barHeight,
             child: Column(
               children: [
                 SizedBox(
-                  height:
-                      showBottomDivider ? _kTabBarHeight - 1 : _kTabBarHeight,
-                  child: _buildBar(),
+                  height: showBottomDivider ? barHeight - 1 : barHeight,
+                  child: Material(
+                    color: workspace
+                        ? Theme.of(context).colorScheme.surface
+                        : Colors.transparent,
+                    child: _buildBar(),
+                  ),
                 ),
                 if (showBottomDivider)
                   const Divider(
@@ -635,14 +643,18 @@ class _DesktopTabState extends State<DesktopTab>
                       child: Row(children: [
                         Offstage(
                           offstage: !showLogo,
-                          child: loadIcon(16),
+                          child: loadIcon(tabType == DesktopTabType.main ||
+                                  tabType == DesktopTabType.install
+                              ? 24
+                              : 16),
                         ),
                         Offstage(
                             offstage: !showTitle,
-                            child: const Text(
-                              "RustDesk",
-                              style: TextStyle(fontSize: 13),
-                            ).marginOnly(left: 2))
+                            child: Text(
+                              bind.mainGetAppNameSync(),
+                              style: TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w700),
+                            ).marginOnly(left: 8))
                       ]).marginOnly(
                         left: 5,
                         right: 10,
@@ -751,6 +763,10 @@ class WindowActionPanelState extends State<WindowActionPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final boxSize = widget.tabController.tabType == DesktopTabType.main ||
+            widget.tabController.tabType == DesktopTabType.install
+        ? 42.0
+        : _kTabBarHeight - 1;
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
@@ -770,6 +786,7 @@ class WindowActionPanelState extends State<WindowActionPanel> {
             children: [
               if (widget.showMinimize && !isMacOS)
                 ActionIcon(
+                  boxSize: boxSize,
                   message: 'Minimize',
                   icon: IconFont.min,
                   onTap: () {
@@ -783,6 +800,7 @@ class WindowActionPanelState extends State<WindowActionPanel> {
                 ),
               if (widget.showMaximize && !isMacOS)
                 Obx(() => ActionIcon(
+                      boxSize: boxSize,
                       message: stateGlobal.isMaximized.isTrue
                           ? 'Restore'
                           : 'Maximize',
@@ -796,6 +814,7 @@ class WindowActionPanelState extends State<WindowActionPanel> {
                     )),
               if (widget.showClose && !isMacOS)
                 ActionIcon(
+                  boxSize: boxSize,
                   message: 'Close',
                   icon: IconFont.close,
                   onTap: () async {
@@ -1070,7 +1089,6 @@ class _TabState extends State<_Tab> with RestorationMixin {
     bool showIcon =
         widget.selectedIcon != null && widget.unselectedIcon != null;
     bool isSelected = widget.index == widget.selected;
-
     final icon = Offstage(
         offstage: !showIcon,
         child: Icon(
@@ -1142,6 +1160,10 @@ class _TabState extends State<_Tab> with RestorationMixin {
   @override
   Widget build(BuildContext context) {
     bool isSelected = widget.index == widget.selected;
+    final barHeight = widget.tabType == DesktopTabType.main ||
+            widget.tabType == DesktopTabType.install
+        ? kDesktopWorkspaceTabBarHeight
+        : _kTabBarHeight;
     bool showDivider =
         widget.index != widget.selected - 1 && widget.index != widget.selected;
     RxBool hover = restoreHover.value.obs;
@@ -1172,8 +1194,8 @@ class _TabState extends State<_Tab> with RestorationMixin {
                   SizedBox(
                       // _kTabBarHeight also displays normally
                       height: _showTabBarBottomDivider(widget.tabType)
-                          ? _kTabBarHeight - 1
-                          : _kTabBarHeight,
+                          ? barHeight - 1
+                          : barHeight,
                       child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [

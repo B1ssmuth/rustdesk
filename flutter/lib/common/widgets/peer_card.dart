@@ -6,6 +6,7 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/yesdesk/theme.dart';
+import 'package:flutter_hbb/yesdesk/widgets.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 
@@ -130,6 +131,9 @@ class _PeerCardState extends State<_PeerCard>
   Widget _buildLandscape() {
     final peer = super.widget.peer;
     final colors = Theme.of(context).extension<YesDeskColors>();
+    if (colors != null) {
+      return gestureDetector(child: _workspaceDevice(peer));
+    }
     var deco = Rx<BoxDecoration?>(
       BoxDecoration(
         border: Border.all(
@@ -165,6 +169,94 @@ class _PeerCardState extends State<_PeerCard>
               ? _buildPeerCard(context, peer, deco)
               : _buildPeerTile(context, peer, deco))),
     );
+  }
+
+  Widget _workspaceDevice(Peer peer) {
+    hideUsernameOnCard ??=
+        bind.mainGetBuildinOption(key: kHideUsernameOnCard) == 'Y';
+    final id = formatID(peer.id);
+    final host = [
+      if (hideUsernameOnCard != true && peer.username.isNotEmpty) peer.username,
+      if (peer.hostname.isNotEmpty) peer.hostname,
+    ].join('@');
+    final name =
+        peer.alias.isNotEmpty ? peer.alias : (host.isNotEmpty ? host : id);
+    final detail = [
+      if (host != name && host.isNotEmpty) host,
+      if (_showNote(peer)) peer.note,
+    ].join(' · ');
+    final status = translate(peer.online ? 'Online' : 'Offline');
+    final theme = Theme.of(context).textTheme;
+    final leading = peer.platform.isEmpty
+        ? const Icon(Icons.desktop_windows_outlined, size: 22)
+        : getPlatformImage(peer.platform, size: 22);
+    final selection = Provider.of<PeerTabModel>(context);
+    final action = selection.multiSelectionMode
+        ? Center(
+            child: Icon(
+                selection.isPeerSelected(peer.id)
+                    ? Icons.check_box_outlined
+                    : Icons.check_box_outline_blank,
+                color: YesDeskColors.of(context).accent))
+        : Builder(
+            builder: (buttonContext) => YesDeskIconButton(
+                  label: translate('More'),
+                  icon: Icons.more_horiz_rounded,
+                  onPressed: () {
+                    final overlay = Overlay.of(buttonContext)
+                        .context
+                        .findRenderObject() as RenderBox;
+                    final box = buttonContext.findRenderObject() as RenderBox;
+                    final origin =
+                        box.localToGlobal(Offset.zero, ancestor: overlay);
+                    _menuPos =
+                        RelativeRect.fromSize(origin & box.size, overlay.size);
+                    _showPeerMenu(peer.id);
+                  },
+                ));
+
+    return Obx(() {
+      if (peerCardUiType.value == PeerUiType.list) {
+        return YesDeskDeviceRow(
+          name: name,
+          id: id,
+          detail: detail,
+          platform: peer.platform.isEmpty ? '—' : peer.platform,
+          status: status,
+          leading: leading,
+          action: action,
+        );
+      }
+      return YesDeskPanel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                leading,
+                const SizedBox(width: YesDeskSpace.sm),
+                Expanded(
+                    child: Text(name,
+                        style: theme.titleSmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis)),
+                action,
+              ],
+            ),
+            Text([id, status].join(' · '),
+                style: theme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+            if (detail.isNotEmpty)
+              Flexible(
+                  child: Text(detail,
+                      style: theme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+      );
+    });
   }
 
   bool _showNote(Peer peer) {
@@ -541,10 +633,12 @@ class _PeerCardState extends State<_PeerCard>
   /// Show the peer menu and handle user's choice.
   /// User might remove the peer or send a file to the peer.
   void _showPeerMenu(String id) async {
+    final items = await widget.popupMenuEntryBuilder(context);
+    if (!mounted) return;
     await mod_menu.showMenu(
       context: context,
       position: _menuPos,
-      items: await super.widget.popupMenuEntryBuilder(context),
+      items: items,
       elevation: 8,
     );
   }

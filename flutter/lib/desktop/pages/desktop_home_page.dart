@@ -115,21 +115,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           ),
           child: Row(
             children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  color: colors.selected,
-                  borderRadius: BorderRadius.circular(YesDeskSpace.radius),
-                ),
-                child: Icon(Icons.desktop_windows_outlined,
-                    size: 17, color: colors.accent),
-              ),
-              const SizedBox(width: YesDeskSpace.sm),
               Expanded(
                 child: Text(
-                  bind.mainGetAppNameSync(),
+                  translate('IT Workspace'),
                   style: Theme.of(context).textTheme.titleMedium,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               if (supportToggle) _supportToggle(context, outgoingOnly),
@@ -147,22 +138,33 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   Widget _supportToggle(BuildContext context, bool outgoingOnly) {
-    final label = translate(_showSupport
-        ? 'Quick Connect'
-        : outgoingOnly
-            ? 'Information'
-            : 'Your Desktop');
     final icon = _showSupport ? Icons.arrow_back_rounded : Icons.badge_outlined;
     void toggle() => setState(() => _showSupport = !_showSupport);
-    if (MediaQuery.sizeOf(context).width >=
-        MediaQuery.textScalerOf(context).scale(360)) {
-      return TextButton.icon(
-        onPressed: toggle,
-        icon: Icon(icon, size: 17),
-        label: Text(label),
-      );
-    }
-    return YesDeskIconButton(label: label, icon: icon, onPressed: toggle);
+    return ListenableBuilder(
+      listenable: gFFI.serverModel,
+      builder: (context, _) {
+        final model = gFFI.serverModel;
+        final showId = !_showSupport && !outgoingOnly && model.hasServerId;
+        final label = translate(_showSupport
+            ? 'Quick Connect'
+            : outgoingOnly
+                ? 'Information'
+                : 'Your Desktop');
+        if (MediaQuery.sizeOf(context).width >=
+            MediaQuery.textScalerOf(context).scale(420)) {
+          return Tooltip(
+            message: label,
+            child: TextButton.icon(
+              onPressed: toggle,
+              icon: Icon(icon, size: 18),
+              label: Text(
+                  showId ? "${translate('ID')} ${model.serverId.text}" : label),
+            ),
+          );
+        }
+        return YesDeskIconButton(label: label, icon: icon, onPressed: toggle);
+      },
+    );
   }
 
   Widget _buildSupport(bool incomingOnly, bool outgoingOnly) {

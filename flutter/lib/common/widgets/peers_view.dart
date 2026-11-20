@@ -9,6 +9,7 @@ import 'package:flutter_hbb/models/ab_model.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/yesdesk/theme.dart';
+import 'package:flutter_hbb/yesdesk/widgets.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:visibility_detector/visibility_detector.dart';
@@ -311,12 +312,66 @@ class _PeersViewState extends State<_PeersView>
                           return buildOnePeer(peers[index], false);
                         }));
 
+            final usesWorkspace =
+                Theme.of(context).extension<YesDeskColors>() != null;
+            final desktopView = usesWorkspace
+                ? Obx(() {
+                    if (peerCardUiType.value == PeerUiType.list) {
+                      return Material(
+                        color: YesDeskColors.of(context).surface,
+                        child: Column(children: [
+                          YesDeskDeviceRow(
+                            header: true,
+                            name: translate('Device'),
+                            id: translate('ID'),
+                            platform: translate('Platform'),
+                            status: translate('Status'),
+                          ),
+                          Expanded(
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              itemCount: peers.length,
+                              itemBuilder: (_, index) {
+                                final peer = peers[index];
+                                return VisibilityDetector(
+                                  key: ValueKey(_cardId(peer.id)),
+                                  onVisibilityChanged: onVisibilityChanged,
+                                  child: widget.peerCardBuilder(peer),
+                                );
+                              },
+                            ),
+                          ),
+                        ]),
+                      );
+                    }
+                    return GridView.builder(
+                      padding: const EdgeInsets.only(top: YesDeskSpace.sm),
+                      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 320,
+                        mainAxisExtent:
+                            MediaQuery.textScalerOf(context).scale(104),
+                        mainAxisSpacing: YesDeskSpace.sm,
+                        crossAxisSpacing: YesDeskSpace.sm,
+                      ),
+                      itemCount: peers.length,
+                      itemBuilder: (_, index) {
+                        final peer = peers[index];
+                        return VisibilityDetector(
+                          key: ValueKey(_cardId(peer.id)),
+                          onVisibilityChanged: onVisibilityChanged,
+                          child: widget.peerCardBuilder(peer),
+                        );
+                      },
+                    );
+                  })
+                : child;
+
             if (updateEvent == UpdateEvent.load) {
               _curPeers.clear();
               _curPeers.addAll(peers.map((e) => e.id));
               _queryOnlines(true);
             }
-            return child;
+            return desktopView;
           } else {
             return const Center(
               child: CircularProgressIndicator(),

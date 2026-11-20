@@ -1,6 +1,20 @@
 lazy_static::lazy_static! {
 pub static ref T: std::collections::HashMap<&'static str, &'static str> =
     [
+        ("Online", "Online"),
+        ("Offline", "Offline"),
+        ("Support", "Support"),
+        ("IT Workspace", "IT Workspace"),
+        ("YES Desk Releases", "YES Desk releases"),
+        ("Source code", "Source code"),
+        ("Open Source Licenses", "Open source licenses"),
+        ("Activation details", "Activation details"),
+        ("yesdesk_upstream_notice", "YES Desk is based on RustDesk, copyright © Purslane Ltd. and contributors. The software is provided under the AGPL-3.0 license."),
+        ("yesdesk_install_license_tip", "Review the license and upstream notices before installing."),
+        ("Device table", "Device table"),
+        ("Device tiles", "Device tiles"),
+        ("Device", "Device"),
+        ("Platform", "Platform"),
         ("desk_tip", "Your desktop can be accessed with this ID and password."),
         ("yesdesk_share_id_tip", "Share this ID with the person connecting to your device."),
         ("yesdesk_connecting_status", "Connecting to the server…"),
