@@ -11,6 +11,7 @@ import re
 import platform
 from pathlib import Path
 from itertools import chain
+from xml.sax.saxutils import escape
 import shutil
 
 g_indent_unit = "\t"
@@ -75,6 +76,11 @@ def make_parser():
     parser.add_argument(
         "--app-name", type=str, default="RustDesk", help="The app name."
     )
+    parser.add_argument(
+        "--display-name", help="Product and shortcut labels. Does not change installer identity."
+    )
+    parser.add_argument("--product-url", help="Public corresponding source URL.")
+    parser.add_argument("--support-url", help="Public support URL.")
     parser.add_argument(
         "-v", "--version", type=str, default="", help="The app version."
     )
@@ -152,14 +158,15 @@ def gen_auto_component(app_name, dist_dir):
 
 def gen_pre_vars(args, dist_dir):
     def func(lines, index_start):
-        upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, app_name + ".exe")
+        upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, args.app_name + ".exe")
 
         indent = g_indent_unit * 1
         to_insert_lines = [
             f'{indent}<?define Version="{g_version}" ?>\n',
             f'{indent}<?define Manufacturer="{args.manufacturer}" ?>\n',
             f'{indent}<?define Product="{args.app_name}" ?>\n',
-            f'{indent}<?define Description="{args.app_name} Installer" ?>\n',
+            f'{indent}<?define DisplayName="{args.display_name or args.app_name}" ?>\n',
+            f'{indent}<?define Description="{args.display_name or args.app_name} Installer" ?>\n',
             f'{indent}<?define ProductLower="{args.app_name.lower()}" ?>\n',
             f'{indent}<?define RegKeyRoot=".$(var.ProductLower)" ?>\n',
             f'{indent}<?define RegKeyInstall="$(var.RegKeyRoot)\\Install" ?>\n',
@@ -179,15 +186,13 @@ def gen_pre_vars(args, dist_dir):
     )
 
 
-def replace_app_name_in_langs(app_name):
-    langs_dir = Path(sys.argv[0]).parent.joinpath("Package/Language")
-    for file_path in langs_dir.glob("*.wxl"):
-        with open(file_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        for i, line in enumerate(lines):
-            lines[i] = line.replace("RustDesk", app_name)
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.writelines(lines)
+def apply_display_name(display_name):
+    localization = Path(sys.argv[0]).parent / "Package/Language/Package.en-us.wxl"
+    content = localization.read_text(encoding="utf-8")
+    localization.write_text(
+        content.replace("@DISPLAY_NAME@", escape(display_name, {'"': "&quot;"})),
+        encoding="utf-8",
+    )
 
 def replace_app_name_in_custom_actions(app_name):
     custion_actions_dir = Path(sys.argv[0]).parent.joinpath("CustomActions")
@@ -311,7 +316,7 @@ def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
             f"{indent}<!--https://learn.microsoft.com/en-us/windows/win32/msi/property-reference-->\n"
         )
         lines_new.append(
-            f'{indent}<RegistryValue Type="string" Name="DisplayName" Value="{args.app_name}" />\n'
+            f'{indent}<RegistryValue Type="string" Name="DisplayName" Value="{args.display_name or args.app_name}" />\n'
         )
         lines_new.append(
             f'{indent}<RegistryValue Type="string" Name="DisplayIcon" Value="[INSTALLFOLDER_INNER]{args.app_name}.exe" />\n'
@@ -394,6 +399,11 @@ def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
 
 
 def gen_custom_ARPSYSTEMCOMPONENT(args, dist_dir):
+    if args.product_url:
+        g_arpsystemcomponent["ReadMe"]["v"] = args.product_url
+    if args.support_url:
+        g_arpsystemcomponent["Contact"]["v"] = args.support_url
+        g_arpsystemcomponent["HelpLink"]["v"] = args.support_url
     try:
         custom_arp = json.loads(args.custom_arp)
         g_arpsystemcomponent.update(custom_arp)
@@ -556,5 +566,6 @@ if __name__ == "__main__":
     if not gen_custom_dialog_bitmaps():
         sys.exit(-1)
 
-    replace_app_name_in_langs(args.app_name)
-    replace_app_name_in_custom_actions(args.app_name)
+    apply_display_name(args.display_name or args.app_name)
+    if args.app_name != "RustDesk":
+        replace_app_name_in_custom_actions(args.app_name)
