@@ -215,6 +215,10 @@ pub fn core_main() -> Option<Vec<String>> {
                 if config::is_disable_installation() {
                     return None;
                 }
+                if platform::windows::uses_yesdesk_msi() {
+                    log::info!("Update YES Desk using a YES Desk MSI package");
+                    return None;
+                }
 
                 let text = match crate::platform::prepare_custom_client_update() {
                     Err(e) => {

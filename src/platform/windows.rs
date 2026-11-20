@@ -1186,7 +1186,7 @@ const YESDESK_EXE: &str = "YES_Desk.exe";
 const YESDESK_MSI: &str = "YES_Desk.msi";
 const YESDESK_INSTALL_KEY: &str = r"HKEY_LOCAL_MACHINE\Software\YES Apart\YES Desk\Installer";
 
-fn uses_yesdesk_msi() -> bool {
+pub fn uses_yesdesk_msi() -> bool {
     cfg!(all(feature = "flutter", target_arch = "x86_64")) && crate::get_app_name() == "YES Desk"
 }
 

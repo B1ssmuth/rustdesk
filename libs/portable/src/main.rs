@@ -215,7 +215,7 @@ fn main() {
 
 #[cfg(windows)]
 mod win {
-    use std::{fs, os::windows::process::CommandExt, path::Path, process::Command};
+    use std::{fs, path::Path};
 
     // Used for privacy mode(magnifier impl).
     pub const RUNTIME_BROKER_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
@@ -234,11 +234,8 @@ mod win {
                 }
             }
         }
-        let _allow_err = Command::new("taskkill")
-            .args(&["/F", "/IM", "RuntimeBroker_rustdesk.exe"])
-            .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
-            .output();
-        let _allow_err = std::fs::copy(src, &format!("{}\\{}", dir.to_string_lossy(), tgt));
+        // The cache belongs to YES Desk. If the copy is in use, leave it in place.
+        let _ = fs::copy(src, target_file);
     }
 
     /// Check if the executable is a Quick Support version.

@@ -1705,7 +1705,8 @@ Widget getPlatformImage(String platform, {double size = 50, Color? color}) {
   return SvgPicture.asset('assets/$platform.svg',
       height: size,
       width: size,
-      colorFilter: color == null ? null : ColorFilter.mode(color, BlendMode.srcIn));
+      colorFilter:
+          color == null ? null : ColorFilter.mode(color, BlendMode.srcIn));
 }
 
 class LastWindowPosition {
