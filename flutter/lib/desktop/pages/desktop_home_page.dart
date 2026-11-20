@@ -2,11 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 
-import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
-import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
@@ -19,12 +17,13 @@ import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/plugin/ui_manager.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
+import 'package:flutter_hbb/yesdesk/widgets.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:window_size/window_size.dart' as window_size;
-import '../widgets/button.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({Key? key}) : super(key: key);
@@ -33,11 +32,10 @@ class DesktopHomePage extends StatefulWidget {
   State<DesktopHomePage> createState() => _DesktopHomePageState();
 }
 
-const borderColor = Color(0xFF2F65BA);
-
 class _DesktopHomePageState extends State<DesktopHomePage>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
-  final _leftPaneScrollController = ScrollController();
+  final _supportScrollController = ScrollController();
+  late final Widget _logo = loadLogo();
 
   @override
   bool get wantKeepAlive => true;
@@ -51,7 +49,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Timer? _updateTimer;
   bool isCardClosed = false;
 
-  final RxBool _editHover = false.obs;
+  bool _showSupport = false;
   final RxBool _block = false.obs;
 
   final GlobalKey _childKey = GlobalKey();
@@ -59,373 +57,284 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final isIncomingOnly = bind.isIncomingOnly();
-    return _buildBlock(
-        child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        buildLeftPane(context),
-        if (!isIncomingOnly) const VerticalDivider(width: 1),
-        if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
-      ],
-    ));
-  }
-
-  Widget _buildBlock({required Widget child}) {
-    return buildRemoteBlock(
-        block: _block, mask: true, use: canBeBlocked, child: child);
-  }
-
-  Widget buildLeftPane(BuildContext context) {
-    final isIncomingOnly = bind.isIncomingOnly();
-    final isOutgoingOnly = bind.isOutgoingOnly();
-    final children = <Widget>[
-      if (!isOutgoingOnly) buildPresetPasswordWarning(),
-      if (bind.isCustomClient())
-        Align(
-          alignment: Alignment.center,
-          child: loadPowered(context),
-        ),
-      Align(
-        alignment: Alignment.center,
-        child: loadLogo(),
-      ),
-      buildTip(context),
-      if (!isOutgoingOnly) buildIDBoard(context),
-      if (!isOutgoingOnly) buildPasswordBoard(context),
-      FutureBuilder<Widget>(
-        future: Future.value(
-            Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
-        builder: (_, data) {
-          if (data.hasData) {
-            if (isIncomingOnly) {
-              if (isInHomePage()) {
-                Future.delayed(Duration(milliseconds: 300), () {
-                  _updateWindowSize();
-                });
-              }
-            }
-            return data.data!;
-          } else {
-            return const Offstage();
-          }
-        },
-      ),
-      buildPluginEntry(),
-    ];
-    if (isIncomingOnly) {
-      children.addAll([
-        Divider(),
-        OnlineStatusWidget(
-          onSvcStatusChanged: () {
-            if (isInHomePage()) {
-              Future.delayed(Duration(milliseconds: 300), () {
-                _updateWindowSize();
-              });
-            }
-          },
-        ).marginOnly(bottom: 6, right: 6)
-      ]);
-    }
-    final textColor = Theme.of(context).textTheme.titleLarge?.color;
-    return ChangeNotifierProvider.value(
-      value: gFFI.serverModel,
-      child: Container(
-        width: isIncomingOnly ? 280.0 : 200.0,
-        color: Theme.of(context).colorScheme.background,
-        child: Stack(
-          children: [
-            Column(
-              children: [
-                SingleChildScrollView(
-                  controller: _leftPaneScrollController,
-                  child: Column(
-                    key: _childKey,
-                    children: children,
-                  ),
-                ),
-                Expanded(child: Container())
-              ],
-            ),
-            if (isOutgoingOnly)
-              Positioned(
-                bottom: 6,
-                left: 12,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: InkWell(
-                    child: Obx(
-                      () => Icon(
-                        Icons.settings,
-                        color: _editHover.value
-                            ? textColor
-                            : Colors.grey.withOpacity(0.5),
-                        size: 22,
-                      ),
-                    ),
-                    onTap: () => {
-                      if (DesktopSettingPage.tabKeys.isNotEmpty)
-                        {
-                          DesktopSettingPage.switch2page(
-                              DesktopSettingPage.tabKeys[0])
-                        }
-                    },
-                    onHover: (value) => _editHover.value = value,
-                  ),
-                ),
-              )
-          ],
-        ),
-      ),
-    );
-  }
-
-  buildRightPane(BuildContext context) {
-    return Container(
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: ConnectionPage(),
-    );
-  }
-
-  buildIDBoard(BuildContext context) {
-    final model = gFFI.serverModel;
-    return Container(
-      margin: const EdgeInsets.only(left: 20, right: 11),
-      height: 57,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
-          Container(
-            width: 2,
-            decoration: const BoxDecoration(color: MyTheme.accent),
-          ).marginOnly(top: 5),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 7),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 25,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          translate("ID"),
-                          style: TextStyle(
-                              fontSize: 14,
-                              color: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge
-                                  ?.color
-                                  ?.withOpacity(0.5)),
-                        ).marginOnly(top: 5),
-                        buildPopupMenu(context)
-                      ],
-                    ),
-                  ),
-                  Flexible(
-                    child: GestureDetector(
-                      onDoubleTap: () {
-                        Clipboard.setData(
-                            ClipboardData(text: model.serverId.text));
-                        showToast(translate("Copied"));
-                      },
-                      child: TextFormField(
-                        controller: model.serverId,
-                        readOnly: true,
-                        decoration: InputDecoration(
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.only(top: 10, bottom: 10),
-                        ),
-                        style: TextStyle(
-                          fontSize: 22,
-                        ),
-                      ).workaroundFreezeLinuxMint(),
-                    ),
-                  )
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget buildPopupMenu(BuildContext context) {
-    final textColor = Theme.of(context).textTheme.titleLarge?.color;
-    RxBool hover = false.obs;
-    return InkWell(
-      onTap: DesktopTabPage.onAddSetting,
-      child: Tooltip(
-        message: translate('Settings'),
-        child: Obx(
-          () => CircleAvatar(
-            radius: 15,
-            backgroundColor: hover.value
-                ? Theme.of(context).scaffoldBackgroundColor
-                : Theme.of(context).colorScheme.background,
-            child: Icon(
-              Icons.more_vert_outlined,
-              size: 20,
-              color: hover.value ? textColor : textColor?.withOpacity(0.5),
-            ),
-          ),
-        ),
-      ),
-      onHover: (value) => hover.value = value,
-    );
-  }
-
-  buildPasswordBoard(BuildContext context) {
-    return ChangeNotifierProvider.value(
-        value: gFFI.serverModel,
-        child: Consumer<ServerModel>(
-          builder: (context, model, child) {
-            return buildPasswordBoard2(context, model);
-          },
-        ));
-  }
-
-  buildPasswordBoard2(BuildContext context, ServerModel model) {
-    RxBool refreshHover = false.obs;
-    RxBool editHover = false.obs;
-    final textColor = Theme.of(context).textTheme.titleLarge?.color;
-    final showOneTime = model.approveMode != 'click' &&
-        model.verificationMethod != kUsePermanentPassword;
-    return Container(
-      margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
-          Container(
-            width: 2,
-            height: 52,
-            decoration: BoxDecoration(color: MyTheme.accent),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 7),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AutoSizeText(
-                    translate("One-time Password"),
-                    style: TextStyle(
-                        fontSize: 14, color: textColor?.withOpacity(0.5)),
-                    maxLines: 1,
-                  ),
-                  Row(
+    final incomingOnly = bind.isIncomingOnly();
+    final outgoingOnly = bind.isOutgoingOnly();
+    return YesDeskTheme(
+      child: Builder(builder: (context) {
+        final colors = YesDeskColors.of(context);
+        final support = _buildSupport(incomingOnly, outgoingOnly);
+        return buildRemoteBlock(
+          block: _block,
+          mask: true,
+          use: canBeBlocked,
+          child: Material(
+            color: colors.canvas,
+            child: incomingOnly
+                ? Align(alignment: Alignment.topCenter, child: support)
+                : Column(
                     children: [
                       Expanded(
-                        child: GestureDetector(
-                          onDoubleTap: () {
-                            if (showOneTime) {
-                              Clipboard.setData(
-                                  ClipboardData(text: model.serverPasswd.text));
-                              showToast(translate("Copied"));
-                            }
-                          },
-                          child: TextFormField(
-                            controller: model.serverPasswd,
-                            readOnly: true,
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              contentPadding:
-                                  EdgeInsets.only(top: 14, bottom: 10),
-                            ),
-                            style: TextStyle(fontSize: 15),
-                          ).workaroundFreezeLinuxMint(),
+                        child: YesDeskWorkspaceLayout(
+                          main: const ConnectionPage(),
+                          support: support,
+                          showSupport: _showSupport,
+                          header: (compact) => _buildHeader(
+                            supportToggle: compact,
+                            outgoingOnly: outgoingOnly,
+                          ),
                         ),
                       ),
-                      if (showOneTime)
-                        AnimatedRotationWidget(
-                          onPressed: () => bind.mainUpdateTemporaryPassword(),
-                          child: Tooltip(
-                            message: translate('Refresh Password'),
-                            child: Obx(() => RotatedBox(
-                                quarterTurns: 2,
-                                child: Icon(
-                                  Icons.refresh,
-                                  color: refreshHover.value
-                                      ? textColor
-                                      : Color(0xFFDDDDDD),
-                                  size: 22,
-                                ))),
-                          ),
-                          onHover: (value) => refreshHover.value = value,
-                        ).marginOnly(right: 8, top: 4),
-                      if (!bind.isDisableSettings())
-                        InkWell(
-                          child: Tooltip(
-                            message: translate('Change Password'),
-                            child: Obx(
-                              () => Icon(
-                                Icons.edit,
-                                color: editHover.value
-                                    ? textColor
-                                    : Color(0xFFDDDDDD),
-                                size: 22,
-                              ).marginOnly(right: 8, top: 4),
-                            ),
-                          ),
-                          onTap: () => DesktopSettingPage.switch2page(
-                              SettingsTabKey.safety),
-                          onHover: (value) => editHover.value = value,
+                      if (!outgoingOnly) ...[
+                        const Divider(height: 1),
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: OnlineStatusWidget(),
                         ),
+                      ],
                     ],
                   ),
-                ],
-              ),
-            ),
           ),
-        ],
-      ),
+        );
+      }),
     );
   }
 
-  buildTip(BuildContext context) {
-    final isOutgoingOnly = bind.isOutgoingOnly();
-    return Padding(
-      padding:
-          const EdgeInsets.only(left: 20.0, right: 16, top: 16.0, bottom: 5),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
+  Widget _buildHeader({
+    bool supportToggle = false,
+    bool outgoingOnly = false,
+  }) {
+    final settingsEnabled = !bind.isDisableSettings();
+    return Builder(builder: (context) {
+      final colors = YesDeskColors.of(context);
+      return Material(
+        color: colors.surface,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: YesDeskSpace.md,
+            vertical: YesDeskSpace.xs,
+          ),
+          child: Row(
             children: [
-              if (!isOutgoingOnly)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    translate("Your Desktop"),
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: colors.selected,
+                  borderRadius: BorderRadius.circular(YesDeskSpace.radius),
+                ),
+                child: Icon(Icons.desktop_windows_outlined,
+                    size: 17, color: colors.accent),
+              ),
+              const SizedBox(width: YesDeskSpace.sm),
+              Expanded(
+                child: Text(
+                  bind.mainGetAppNameSync(),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (supportToggle) _supportToggle(context, outgoingOnly),
+              if (settingsEnabled)
+                YesDeskIconButton(
+                  label: translate('Settings'),
+                  icon: Icons.settings_outlined,
+                  onPressed: DesktopTabPage.onAddSetting,
                 ),
             ],
           ),
-          SizedBox(
-            height: 10.0,
+        ),
+      );
+    });
+  }
+
+  Widget _supportToggle(BuildContext context, bool outgoingOnly) {
+    final label = translate(_showSupport
+        ? 'Quick Connect'
+        : outgoingOnly
+            ? 'Information'
+            : 'Your Desktop');
+    final icon = _showSupport ? Icons.arrow_back_rounded : Icons.badge_outlined;
+    void toggle() => setState(() => _showSupport = !_showSupport);
+    if (MediaQuery.sizeOf(context).width >=
+        MediaQuery.textScalerOf(context).scale(360)) {
+      return TextButton.icon(
+        onPressed: toggle,
+        icon: Icon(icon, size: 17),
+        label: Text(label),
+      );
+    }
+    return YesDeskIconButton(label: label, icon: icon, onPressed: toggle);
+  }
+
+  Widget _buildSupport(bool incomingOnly, bool outgoingOnly) {
+    final content = Builder(builder: (context) {
+      return Column(
+        key: incomingOnly ? _childKey : null,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (incomingOnly) ...[
+            _buildHeader(),
+            const Divider(height: 1),
+          ],
+          Padding(
+            padding: const EdgeInsets.all(YesDeskSpace.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (bind.isCustomClient()) Align(child: loadPowered(context)),
+                Align(child: _logo),
+                if (!outgoingOnly) ...[
+                  Text(translate('Your Desktop'),
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: YesDeskSpace.xs),
+                ],
+                Text(
+                  translate(outgoingOnly
+                      ? 'outgoing_only_desk_tip'
+                      : 'yesdesk_share_id_tip'),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                if (!outgoingOnly) ...[
+                  const SizedBox(height: YesDeskSpace.md),
+                  _buildCredentials(),
+                  _buildPasswordWarning(),
+                ],
+                Obx(() => buildHelpCards(stateGlobal.updateUrl.value)),
+                buildPluginEntry(),
+              ],
+            ),
           ),
-          if (!isOutgoingOnly)
-            Text(
-              translate("desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          if (isOutgoingOnly)
-            Text(
-              translate("outgoing_only_desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+          if (incomingOnly) ...[
+            const Divider(height: 1),
+            const OnlineStatusWidget(),
+          ],
         ],
+      );
+    });
+
+    return ChangeNotifierProvider.value(
+      value: gFFI.serverModel,
+      child: SizedBox(
+        width: incomingOnly ? 280 : null,
+        child: SingleChildScrollView(
+          controller: _supportScrollController,
+          child: incomingOnly
+              ? NotificationListener<SizeChangedLayoutNotification>(
+                  onNotification: (_) {
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _updateWindowSize());
+                    return true;
+                  },
+                  child: SizeChangedLayoutNotifier(child: content),
+                )
+              : content,
+        ),
       ),
+    );
+  }
+
+  Future<void> _copyCredential(String value) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: value));
+      if (mounted) showToast(translate('Copied'));
+    } catch (_) {
+      if (mounted) showToast(translate('Failed to copy'));
+    }
+  }
+
+  Widget _buildCredentials() {
+    return ListenableBuilder(
+      listenable: gFFI.serverModel,
+      builder: (context, _) {
+        final model = gFFI.serverModel;
+        final showOneTime = !svcStopped.value &&
+            model.approveMode != 'click' &&
+            model.verificationMethod != kUsePermanentPassword;
+        final id = model.serverId.text;
+        final temporaryPassword = model.serverPasswd.text;
+        final settingsEnabled = !bind.isDisableSettings();
+        final copyPassword = showOneTime && model.hasTemporaryPassword;
+        final copyLabel = translate('Copy to clipboard');
+
+        return YesDeskPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              YesDeskCredential(
+                label: translate('ID'),
+                value: id.isEmpty ? '—' : id,
+                copyLabel: copyLabel,
+                onCopy: model.hasServerId ? () => _copyCredential(id) : null,
+              ),
+              const Divider(height: YesDeskSpace.lg),
+              YesDeskCredential(
+                label: translate('One-time Password'),
+                value: showOneTime &&
+                        temporaryPassword.isNotEmpty &&
+                        temporaryPassword != '-'
+                    ? temporaryPassword
+                    : '—',
+                copyLabel: copyLabel,
+                onCopy: copyPassword
+                    ? () => _copyCredential(temporaryPassword)
+                    : null,
+                actions: [
+                  if (showOneTime)
+                    YesDeskIconButton(
+                      label: translate('Refresh Password'),
+                      icon: Icons.refresh_rounded,
+                      onPressed: () => bind.mainUpdateTemporaryPassword(),
+                    ),
+                  if (settingsEnabled)
+                    YesDeskIconButton(
+                      label: translate('Change Password'),
+                      icon: Icons.edit_outlined,
+                      onPressed: () =>
+                          DesktopSettingPage.switch2page(SettingsTabKey.safety),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPasswordWarning() {
+    if (bind.mainGetBuildinOption(key: kOptionRemovePresetPasswordWarning) !=
+        'N') {
+      return const SizedBox.shrink();
+    }
+    return FutureBuilder<bool>(
+      future: bind.isPresetPassword(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.only(top: YesDeskSpace.sm),
+            child: Text(translate('Error')),
+          );
+        }
+        if (snapshot.data != true) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(top: YesDeskSpace.md),
+          child: YesDeskPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  translate('Security Alert'),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: YesDeskColors.of(context).warning,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: YesDeskSpace.xs),
+                Text(translate('preset_password_warning')),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -457,7 +366,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               : null);
     }
     if (systemError.isNotEmpty) {
-      return buildInstallCard("", systemError, "", () {});
+      return buildInstallCard("Error", systemError, "", null);
     }
 
     if (isWindows && !bind.isDisableInstallation()) {
@@ -526,7 +435,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             "Warning",
             "selinux_tip",
             "",
-            () async {},
+            null,
             marginTop: LinuxCards.isEmpty ? 20.0 : 5.0,
             help: 'Help',
             link:
@@ -538,13 +447,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       }
       if (bind.mainCurrentIsWayland()) {
         LinuxCards.add(buildInstallCard(
-            "Warning", "wayland_experiment_tip", "", () async {},
+            "Warning", "wayland_experiment_tip", "", null,
             marginTop: LinuxCards.isEmpty ? 20.0 : 5.0,
             help: 'Help',
             link: 'https://rustdesk.com/docs/en/client/linux/#x11-required'));
       } else if (bind.mainIsLoginWayland()) {
-        LinuxCards.add(buildInstallCard("Warning",
-            "Login screen using Wayland is not supported", "", () async {},
+        LinuxCards.add(buildInstallCard(
+            "Warning", "Login screen using Wayland is not supported", "", null,
             marginTop: LinuxCards.isEmpty ? 20.0 : 5.0,
             help: 'Help',
             link: 'https://rustdesk.com/docs/en/client/linux/#login-screen'));
@@ -573,125 +482,81 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     return Container();
   }
 
-  Widget buildInstallCard(String title, String content, String btnText,
-      GestureTapCallback onPressed,
-      {double marginTop = 20.0,
-      String? help,
-      String? link,
-      bool? closeButton,
-      String? closeOption}) {
+  Widget buildInstallCard(
+    String title,
+    String content,
+    String btnText,
+    GestureTapCallback? onPressed, {
+    double marginTop = YesDeskSpace.md,
+    String? help,
+    String? link,
+    bool closeButton = false,
+    String? closeOption,
+  }) {
     if (bind.mainGetBuildinOption(key: kOptionHideHelpCards) == 'Y' &&
         content != 'install_daemon_tip') {
-      return const SizedBox();
-    }
-    void closeCard() async {
-      if (closeOption != null) {
-        await bind.mainSetLocalOption(key: closeOption, value: 'N');
-        if (bind.mainGetLocalOption(key: closeOption) == 'N') {
-          setState(() {
-            isCardClosed = true;
-          });
-        }
-      } else {
-        setState(() {
-          isCardClosed = true;
-        });
-      }
+      return const SizedBox.shrink();
     }
 
-    return Stack(
-      children: [
-        Container(
-          margin: EdgeInsets.fromLTRB(
-              0, marginTop, 0, bind.isIncomingOnly() ? marginTop : 0),
-          child: Container(
-              decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-                colors: [
-                  Color.fromARGB(255, 226, 66, 188),
-                  Color.fromARGB(255, 244, 114, 124),
-                ],
-              )),
-              padding: EdgeInsets.all(20),
-              child: Column(
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: (title.isNotEmpty
-                          ? <Widget>[
-                              Center(
-                                  child: Text(
-                                translate(title),
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 15),
-                              ).marginOnly(bottom: 6)),
-                            ]
-                          : <Widget>[]) +
-                      <Widget>[
-                        if (content.isNotEmpty)
-                          Text(
-                            translate(content),
-                            style: TextStyle(
-                                height: 1.5,
-                                color: Colors.white,
-                                fontWeight: FontWeight.normal,
-                                fontSize: 13),
-                          ).marginOnly(bottom: 20)
-                      ] +
-                      (btnText.isNotEmpty
-                          ? <Widget>[
-                              Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    FixedWidthButton(
-                                      width: 150,
-                                      padding: 8,
-                                      isOutline: true,
-                                      text: translate(btnText),
-                                      textColor: Colors.white,
-                                      borderColor: Colors.white,
-                                      textSize: 20,
-                                      radius: 10,
-                                      onTap: onPressed,
-                                    )
-                                  ])
-                            ]
-                          : <Widget>[]) +
-                      (help != null
-                          ? <Widget>[
-                              Center(
-                                  child: InkWell(
-                                      onTap: () async =>
-                                          await launchUrl(Uri.parse(link!)),
-                                      child: Text(
-                                        translate(help),
-                                        style: TextStyle(
-                                            decoration:
-                                                TextDecoration.underline,
-                                            color: Colors.white,
-                                            fontSize: 12),
-                                      )).marginOnly(top: 6)),
-                            ]
-                          : <Widget>[]))),
-        ),
-        if (closeButton != null && closeButton == true)
-          Positioned(
-            top: 18,
-            right: 0,
-            child: IconButton(
-              icon: Icon(
-                Icons.close,
-                color: Colors.white,
-                size: 20,
-              ),
-              onPressed: closeCard,
-            ),
+    Future<void> closeCard() async {
+      if (closeOption != null) {
+        await bind.mainSetLocalOption(key: closeOption, value: 'N');
+        if (bind.mainGetLocalOption(key: closeOption) != 'N') return;
+      }
+      if (mounted) setState(() => isCardClosed = true);
+    }
+
+    return Builder(builder: (context) {
+      final text = Theme.of(context).textTheme;
+      return Padding(
+        padding: EdgeInsets.only(top: marginTop),
+        child: YesDeskPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (title.isNotEmpty || closeButton)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        translate(title),
+                        style: text.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    if (closeButton)
+                      YesDeskIconButton(
+                        label: translate('Close'),
+                        icon: Icons.close_rounded,
+                        onPressed: closeCard,
+                      ),
+                  ],
+                ),
+              if (content.isNotEmpty)
+                Text(translate(content), style: text.bodySmall),
+              if (onPressed != null || (help != null && link != null)) ...[
+                const SizedBox(height: YesDeskSpace.sm),
+                Wrap(
+                  spacing: YesDeskSpace.xs,
+                  children: [
+                    if (onPressed != null)
+                      OutlinedButton(
+                        onPressed: onPressed,
+                        child: Text(translate(btnText)),
+                      ),
+                    if (help != null && link != null)
+                      TextButton(
+                        onPressed: () => launchUrl(Uri.parse(link)),
+                        child: Text(translate(help)),
+                      ),
+                  ],
+                ),
+              ],
+            ],
           ),
-      ],
-    );
+        ),
+      );
+    });
   }
 
   @override
@@ -700,11 +565,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
       await gFFI.serverModel.fetchID();
       final error = await bind.mainGetError();
+      if (!mounted) return;
       if (systemError != error) {
         systemError = error;
         setState(() {});
       }
       final v = await mainGetBoolOption(kOptionStopService);
+      if (!mounted) return;
       if (v != svcStopped.value) {
         svcStopped.value = v;
         setState(() {});
@@ -735,7 +602,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         if (isMacOS) {
           Future.microtask(() async {
             if ((await osxCanRecordAudio() ==
-                PermissionAuthorizeType.authorized)) {
+                    PermissionAuthorizeType.authorized) &&
+                mounted) {
               watchIsCanRecordAudio = false;
               setState(() {});
             }
@@ -767,7 +635,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
     bool isChattyMethod(String methodName) {
       switch (methodName) {
-        case kWindowBumpMouse: return true;
+        case kWindowBumpMouse:
+          return true;
       }
 
       return false;
@@ -775,8 +644,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
     rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
       if (!isChattyMethod(call.method)) {
-        debugPrint(
-          "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
+        debugPrint("[Main] call ${call.method} from window $fromWindowId");
       }
       if (call.method == kWindowMainWindowOnTop) {
         windowOnTop(null);
@@ -811,9 +679,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           connToken: call.arguments['connToken'],
         );
       } else if (call.method == kWindowBumpMouse) {
-        return RdPlatformChannel.instance.bumpMouse(
-          dx: call.arguments['dx'],
-          dy: call.arguments['dy']);
+        return RdPlatformChannel.instance
+            .bumpMouse(dx: call.arguments['dx'], dy: call.arguments['dy']);
       } else if (call.method == kWindowEventMoveTabToNewWindow) {
         final args = call.arguments.split(',');
         int? windowId;
@@ -861,6 +728,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   _updateWindowSize() {
+    if (!mounted || !isInHomePage()) return;
     RenderObject? renderObject = _childKey.currentContext?.findRenderObject();
     if (renderObject == null) {
       return;
@@ -876,6 +744,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   @override
   void dispose() {
+    _supportScrollController.dispose();
+    rustDeskWinManager.unregisterActiveWindowListener(onActiveWindowChanged);
     _uniLinksSubscription?.cancel();
     Get.delete<RxBool>(tag: 'stop-service');
     _updateTimer?.cancel();

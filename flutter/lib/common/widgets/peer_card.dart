@@ -5,6 +5,7 @@ import 'package:flutter_hbb/common/widgets/dialog.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 
@@ -50,6 +51,7 @@ class _PeerCardState extends State<_PeerCard>
   final double _cardRadius = 16;
   final double _tileRadius = 5;
   final double _borderWidth = 2;
+  bool _showKeyboardFocus = false;
 
   @override
   Widget build(BuildContext context) {
@@ -61,10 +63,19 @@ class _PeerCardState extends State<_PeerCard>
   Widget gestureDetector({required Widget child}) {
     final PeerTabModel peerTabModel = Provider.of(context);
     final peer = super.widget.peer;
-    return GestureDetector(
-        onDoubleTap: peerTabModel.multiSelectionMode
-            ? null
-            : () => widget.connect(context, peer.id),
+    final colors = Theme.of(context).extension<YesDeskColors>();
+
+    void activate() {
+      if (peerTabModel.multiSelectionMode) {
+        peerTabModel.select(peer);
+      } else {
+        widget.connect(context, peer.id);
+      }
+    }
+
+    final pointerTarget = GestureDetector(
+        excludeFromSemantics: colors != null,
+        onDoubleTap: peerTabModel.multiSelectionMode ? null : activate,
         onTap: () {
           if (peerTabModel.multiSelectionMode) {
             peerTabModel.select(peer);
@@ -78,6 +89,31 @@ class _PeerCardState extends State<_PeerCard>
         },
         onLongPress: () => peerTabModel.select(peer),
         child: child);
+    if (colors == null) return pointerTarget;
+
+    return FocusableActionDetector(
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+          activate();
+          return null;
+        }),
+      },
+      onShowFocusHighlight: (show) => setState(() => _showKeyboardFocus = show),
+      child: Semantics(
+        button: true,
+        onTap: activate,
+        child: DecoratedBox(
+          position: DecorationPosition.foreground,
+          decoration: BoxDecoration(
+            border: _showKeyboardFocus
+                ? Border.all(color: colors.accent, width: 2)
+                : null,
+            borderRadius: BorderRadius.circular(YesDeskSpace.radius),
+          ),
+          child: pointerTarget,
+        ),
+      ),
+    );
   }
 
   Widget _buildPortrait() {
@@ -93,9 +129,11 @@ class _PeerCardState extends State<_PeerCard>
 
   Widget _buildLandscape() {
     final peer = super.widget.peer;
+    final colors = Theme.of(context).extension<YesDeskColors>();
     var deco = Rx<BoxDecoration?>(
       BoxDecoration(
-        border: Border.all(color: Colors.transparent, width: _borderWidth),
+        border: Border.all(
+            color: colors?.outline ?? Colors.transparent, width: _borderWidth),
         borderRadius: BorderRadius.circular(
           peerCardUiType.value == PeerUiType.grid ? _cardRadius : _tileRadius,
         ),
@@ -114,7 +152,9 @@ class _PeerCardState extends State<_PeerCard>
       },
       onExit: (evt) {
         deco.value = BoxDecoration(
-          border: Border.all(color: Colors.transparent, width: _borderWidth),
+          border: Border.all(
+              color: colors?.outline ?? Colors.transparent,
+              width: _borderWidth),
           borderRadius: BorderRadius.circular(
             peerCardUiType.value == PeerUiType.grid ? _cardRadius : _tileRadius,
           ),
@@ -132,12 +172,14 @@ class _PeerCardState extends State<_PeerCard>
   }
 
   makeChild(bool isPortrait, Peer peer) {
+    final colors = Theme.of(context).extension<YesDeskColors>();
     final name = hideUsernameOnCard == true
         ? peer.hostname
         : '${peer.username}${peer.username.isNotEmpty && peer.hostname.isNotEmpty ? '@' : ''}${peer.hostname}';
     final greyStyle = TextStyle(
         fontSize: 11,
-        color: Theme.of(context).textTheme.titleLarge?.color?.withOpacity(0.6));
+        color: colors?.muted ??
+            Theme.of(context).textTheme.titleLarge?.color?.withOpacity(0.6));
     final showNote = _showNote(peer);
 
     return Row(
@@ -145,7 +187,8 @@ class _PeerCardState extends State<_PeerCard>
       children: [
         Container(
             decoration: BoxDecoration(
-              color: str2color('${peer.id}${peer.platform}', 0x7f),
+              color: colors?.raised ??
+                  str2color('${peer.id}${peer.platform}', 0x7f),
               borderRadius: isPortrait
                   ? BorderRadius.circular(_tileRadius)
                   : BorderRadius.only(
@@ -158,13 +201,15 @@ class _PeerCardState extends State<_PeerCard>
             height: isPortrait ? 50 : null,
             child: Stack(
               children: [
-                getPlatformImage(peer.platform, size: isPortrait ? 38 : 30)
+                getPlatformImage(peer.platform,
+                        size: isPortrait ? 38 : (colors == null ? 30 : 22))
                     .paddingAll(6),
                 if (_shouldBuildPasswordIcon(peer))
                   Positioned(
                     top: 1,
                     left: 1,
-                    child: Icon(Icons.key, size: 6, color: Colors.white),
+                    child: Icon(Icons.key,
+                        size: 6, color: colors?.muted ?? Colors.white),
                   ),
               ],
             )),
@@ -280,6 +325,7 @@ class _PeerCardState extends State<_PeerCard>
 
   Widget _buildPeerCard(
       BuildContext context, Peer peer, Rx<BoxDecoration?> deco) {
+    final palette = Theme.of(context).extension<YesDeskColors>();
     hideUsernameOnCard ??=
         bind.mainGetBuildinOption(key: kHideUsernameOnCard) == 'Y';
     final name = hideUsernameOnCard == true
@@ -303,7 +349,8 @@ class _PeerCardState extends State<_PeerCard>
               children: [
                 Expanded(
                   child: Container(
-                    color: str2color('${peer.id}${peer.platform}', 0x7f),
+                    color: palette?.raised ??
+                        str2color('${peer.id}${peer.platform}', 0x7f),
                     child: Row(
                       children: [
                         Expanded(
@@ -323,8 +370,9 @@ class _PeerCardState extends State<_PeerCard>
                                       waitDuration: const Duration(seconds: 1),
                                       child: Text(
                                         name,
-                                        style: const TextStyle(
-                                            color: Colors.white70,
+                                        style: TextStyle(
+                                            color:
+                                                palette?.text ?? Colors.white70,
                                             fontSize: 12),
                                         textAlign: TextAlign.center,
                                         overflow: TextOverflow.ellipsis,
@@ -342,8 +390,9 @@ class _PeerCardState extends State<_PeerCard>
                                       waitDuration: const Duration(seconds: 1),
                                       child: Text(
                                         peer.note,
-                                        style: const TextStyle(
-                                            color: Colors.white38,
+                                        style: TextStyle(
+                                            color: palette?.muted ??
+                                                Colors.white38,
                                             fontSize: 10),
                                         textAlign: TextAlign.center,
                                         overflow: TextOverflow.ellipsis,
@@ -397,7 +446,8 @@ class _PeerCardState extends State<_PeerCard>
           Positioned(
             top: 4,
             left: 12,
-            child: Icon(Icons.key, size: 12, color: Colors.white),
+            child: Icon(Icons.key,
+                size: 12, color: palette?.muted ?? Colors.white),
           ),
         if (colors.isNotEmpty)
           Positioned(

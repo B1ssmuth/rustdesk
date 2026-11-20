@@ -124,6 +124,14 @@ class ServerModel with ChangeNotifier {
 
   TextEditingController get serverPasswd => _serverPasswd;
 
+  bool get hasServerId =>
+      _serverId.text.isNotEmpty && _serverId.text != _emptyIdShow;
+
+  bool get hasTemporaryPassword =>
+      _serverPasswd.text.isNotEmpty &&
+      _serverPasswd.text != '-' &&
+      _serverPasswd.text != _emptyIdShow;
+
   List<Client> get clients => _clients;
 
   final controller = ScrollController();
