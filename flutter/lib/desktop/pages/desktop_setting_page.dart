@@ -19,6 +19,7 @@ import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/plugin/manager.dart';
 import 'package:flutter_hbb/plugin/widgets/desktop_settings.dart';
+import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/yesdesk/identity.dart';
 import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:flutter_hbb/yesdesk/widgets.dart';

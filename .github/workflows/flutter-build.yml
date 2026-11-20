@@ -183,6 +183,13 @@ jobs:
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
 
+      - name: Verify YES Desk Windows installation
+        shell: pwsh
+        run: |
+          ./res/msi/test-yesdesk-install.ps1 `
+            -Msi "./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi" `
+            -PortableExe "./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe"
+
       - name: Upload final binaries
         uses: actions/upload-artifact@v4
         with:
