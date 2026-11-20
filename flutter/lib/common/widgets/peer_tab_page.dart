@@ -19,6 +19,9 @@ import 'package:flutter_hbb/models/peer_model.dart';
 
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/yesdesk/ssh/pages/ssh_workspace_stub.dart'
+    if (dart.library.io) 'package:flutter_hbb/yesdesk/ssh/pages/ssh_workspace.dart';
+import 'package:flutter_hbb/yesdesk/ssh/widgets/ssh_strings.dart';
 import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:flutter_hbb/yesdesk/widgets.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -74,6 +77,8 @@ class _PeerTabPageState extends State<PeerTabPage>
     ),
   ];
   RelativeRect? mobileTabContextMenuPos;
+  bool _sshSelected = false;
+  bool _sshVisited = false;
 
   final isOptVisiableFixed = isOptionFixed(kOptionPeerTabVisible);
 
@@ -150,6 +155,9 @@ class _PeerTabPageState extends State<PeerTabPage>
   Widget _buildWorkspace(PeerTabModel model, Widget header) {
     final colors = YesDeskColors.of(context);
     final tabs = model.visibleEnabledOrderedIndexs;
+    final supportsSsh = isDesktop && !isWeb;
+    final language = supportsSsh ? bind.mainGetLocalOption(key: 'lang') : '';
+    final sshLanguage = language.isEmpty ? localeName.toString() : language;
     final tabFixed = isOptionFixed(kOptionPeerTabIndex);
     return LayoutBuilder(builder: (context, constraints) {
       final compact = constraints.maxWidth < 690;
@@ -183,10 +191,19 @@ class _PeerTabPageState extends State<PeerTabPage>
                                 label: model.tabTooltip(tab),
                                 icon: model.tabIcon(tab),
                                 compact: compact,
-                                selected: model.currentTab == tab,
-                                onPressed: tabFixed || model.multiSelectionMode
-                                    ? null
-                                    : () => _selectTab(tab),
+                                selected:
+                                    !_sshSelected && model.currentTab == tab,
+                                onPressed: _sshSelected
+                                    ? () {
+                                        setState(() => _sshSelected = false);
+                                        if (!tabFixed &&
+                                            !model.multiSelectionMode) {
+                                          _selectTab(tab);
+                                        }
+                                      }
+                                    : tabFixed || model.multiSelectionMode
+                                        ? null
+                                        : () => _selectTab(tab),
                               ),
                             ),
                           );
@@ -194,6 +211,39 @@ class _PeerTabPageState extends State<PeerTabPage>
                       ),
                     ),
                   ),
+                  if (supportsSsh && tabs.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: YesDeskSpace.sm),
+                      child: YesDeskNavItem(
+                        icon: Icons.desktop_windows_outlined,
+                        label: SshStrings(sshLanguage)
+                            .text('Remote Desktop', 'Удалённый рабочий стол'),
+                        selected: !_sshSelected,
+                        compact: compact,
+                        onPressed: () => setState(() => _sshSelected = false),
+                      ),
+                    ),
+                  if (supportsSsh)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: YesDeskSpace.sm),
+                      child: YesDeskNavItem(
+                        icon: Icons.terminal,
+                        label: SshStrings(sshLanguage).title,
+                        selected: _sshSelected,
+                        compact: compact,
+                        onPressed: model.multiSelectionMode
+                            ? null
+                            : () {
+                                FocusManager.instance.primaryFocus?.unfocus();
+                                setState(() {
+                                  _sshVisited = true;
+                                  _sshSelected = true;
+                                });
+                              },
+                      ),
+                    ),
                   Align(
                     alignment:
                         compact ? Alignment.center : Alignment.centerLeft,
@@ -221,44 +271,61 @@ class _PeerTabPageState extends State<PeerTabPage>
           ),
           const VerticalDivider(width: 1),
           Expanded(
-            child: LayoutBuilder(builder: (context, body) {
-              return SingleChildScrollView(
-                primary: false,
-                child: SizedBox(
-                  height: math.max(body.maxHeight,
-                      MediaQuery.textScalerOf(context).scale(360)),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        YesDeskSpace.lg, YesDeskSpace.lg, YesDeskSpace.lg, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 760),
-                            child: header,
+            child: IndexedStack(
+              index: _sshSelected ? 1 : 0,
+              sizing: StackFit.expand,
+              children: [
+                ExcludeFocus(
+                  excluding: _sshSelected,
+                  child: LayoutBuilder(builder: (context, body) {
+                    return SingleChildScrollView(
+                      primary: false,
+                      child: SizedBox(
+                        height: math.max(body.maxHeight,
+                            MediaQuery.textScalerOf(context).scale(360)),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(YesDeskSpace.lg,
+                              YesDeskSpace.lg, YesDeskSpace.lg, 0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 760),
+                                  child: header,
+                                ),
+                              ),
+                              const SizedBox(height: YesDeskSpace.md),
+                              if (model.multiSelectionMode)
+                                createMultiSelectionBar(model)
+                              else if (tabs.isNotEmpty) ...[
+                                Text(model.tabTooltip(model.currentTab),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium),
+                                Wrap(
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: _landscapeRightActions(context),
+                                ),
+                              ],
+                              const Divider(height: 1),
+                              _createPeersView(),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: YesDeskSpace.md),
-                        if (model.multiSelectionMode)
-                          createMultiSelectionBar(model)
-                        else if (tabs.isNotEmpty) ...[
-                          Text(model.tabTooltip(model.currentTab),
-                              style: Theme.of(context).textTheme.titleMedium),
-                          Wrap(
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: _landscapeRightActions(context),
-                          ),
-                        ],
-                        const Divider(height: 1),
-                        _createPeersView(),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  }),
                 ),
-              );
-            }),
+                if (_sshVisited)
+                  ExcludeFocus(
+                    excluding: !_sshSelected,
+                    child: SshWorkspace(language: sshLanguage),
+                  ),
+              ],
+            ),
           ),
         ],
       );

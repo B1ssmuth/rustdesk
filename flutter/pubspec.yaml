@@ -107,6 +107,8 @@ dependencies:
   qr_flutter: ^4.1.0
   extended_text: 14.0.0
   xterm: 4.0.0
+  dartssh2:
+    path: third_party/dartssh2
   sqflite: 2.2.0
   google_fonts: ^6.2.1
   vector_math: ^2.1.4
