@@ -1184,10 +1184,10 @@ const IS1: &str = "{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1";
 
 const YESDESK_EXE: &str = "YES_Desk.exe";
 const YESDESK_MSI: &str = "YES_Desk.msi";
+const YESDESK_INSTALL_KEY: &str = r"HKEY_LOCAL_MACHINE\Software\YES Apart\YES Desk\Installer";
 
 fn uses_yesdesk_msi() -> bool {
-    cfg!(all(feature = "flutter", target_arch = "x86_64"))
-        && crate::get_app_name() == "YES Desk"
+    cfg!(all(feature = "flutter", target_arch = "x86_64")) && crate::get_app_name() == "YES Desk"
 }
 
 pub fn has_bundled_installer() -> bool {
@@ -1212,6 +1212,9 @@ fn get_subkey(name: &str, wow: bool) -> String {
 
 fn get_valid_subkey() -> String {
     if uses_yesdesk_msi() {
+        if get_reg_of(YESDESK_INSTALL_KEY, "ExecutableName").eq_ignore_ascii_case(YESDESK_EXE) {
+            return YESDESK_INSTALL_KEY.to_owned();
+        }
         let current = get_subkey("YES Desk", false);
         let legacy_msi = get_subkey("RustDesk", false);
         if !get_reg_of(&current, "InstallLocation").is_empty() {
@@ -1506,18 +1509,24 @@ fn windows_installer() -> ResultType<std::process::Command> {
         bail!("Cannot find the Windows system directory");
     }
     let system_directory = PathBuf::from(OsString::from_wide(&system_directory[..size]));
-    Ok(std::process::Command::new(system_directory.join("msiexec.exe")))
+    Ok(std::process::Command::new(
+        system_directory.join("msiexec.exe"),
+    ))
 }
 
 fn install_yesdesk(options: &str, silent: bool) -> ResultType<()> {
     // Windows Installer handles elevation. The interactive caller starts the installed
     // app only when it can do so with its ordinary user token.
     if !silent && is_elevated(None)? {
-        bail!(crate::lang::translate("yesdesk_install_non_elevated".into()));
+        bail!(crate::lang::translate(
+            "yesdesk_install_non_elevated".into()
+        ));
     }
     let msi = bundled_msi()?;
     if !msi.is_file() {
-        bail!(crate::lang::translate("yesdesk_install_package_missing".into()));
+        bail!(crate::lang::translate(
+            "yesdesk_install_package_missing".into()
+        ));
     }
 
     let mut command = windows_installer()?;
@@ -1532,7 +1541,10 @@ fn install_yesdesk(options: &str, silent: bool) -> ResultType<()> {
         ("desktopicon", "CREATEDESKTOPSHORTCUTS"),
         ("printer", "INSTALLPRINTER"),
     ] {
-        command.arg(format!("{property}={}", u8::from(options.contains(&option))));
+        command.arg(format!(
+            "{property}={}",
+            u8::from(options.contains(&option))
+        ));
     }
     if Config::get_option("stop-service") == "Y" || config::is_outgoing_only() {
         command.arg("YESDESK_SKIP_SERVICE=1");
@@ -1542,12 +1554,16 @@ fn install_yesdesk(options: &str, silent: bool) -> ResultType<()> {
         Some(0) => (),
         Some(1223 | 1602) => bail!(crate::lang::translate("yesdesk_install_cancelled".into())),
         Some(1641 | 3010) if silent => return Ok(()),
-        Some(1641 | 3010) => bail!(crate::lang::translate("yesdesk_install_reboot_required".into())),
+        Some(1641 | 3010) => bail!(crate::lang::translate(
+            "yesdesk_install_reboot_required".into()
+        )),
         _ => bail!("Windows Installer: {status}"),
     }
 
     if !is_installed() || !is_msi_installed()? {
-        bail!(crate::lang::translate("yesdesk_install_not_registered".into()));
+        bail!(crate::lang::translate(
+            "yesdesk_install_not_registered".into()
+        ));
     }
     if !silent {
         let (_, _, _, exe) = get_install_info();
@@ -1861,6 +1877,15 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
 }
 
 pub fn uninstall_me(kill_self: bool) -> ResultType<()> {
+    if uses_yesdesk_msi() && get_valid_subkey() == YESDESK_INSTALL_KEY {
+        let code = get_reg_of(YESDESK_INSTALL_KEY, "ProductCode");
+        let product = hbb_common::uuid::Uuid::parse_str(&code)?;
+        windows_installer()?
+            .args(["/x", &format!("{{{}}}", product.hyphenated()), "/norestart"])
+            .spawn()?;
+        return Ok(());
+    }
+
     run_cmds(get_uninstall(kill_self, true), true, "uninstall")
 }
 

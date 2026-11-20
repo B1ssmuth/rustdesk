@@ -111,6 +111,7 @@
 			<Custom Action="RemoveAmyuniIdd" Before="RemoveInstallFolder"/>
 			<Custom Action="RemoveAmyuniIdd.SetParam" Before="RemoveAmyuniIdd"/>
 			<?else?>
+			<Custom Action="UninstallPrinter" Before="RemoveFiles" Condition='VersionNT &gt;= 603 AND REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE' />
 			<Custom Action="RemoveFirewallRules" Before="RemoveFiles" Condition='REMOVE = "ALL"'/>
 			<Custom Action="RemoveFirewallRules.SetParam" Before="RemoveFirewallRules" Condition='REMOVE = "ALL"'/>
 			<?endif?>

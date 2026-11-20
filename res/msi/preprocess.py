@@ -198,6 +198,17 @@ def apply_display_name(display_name):
         encoding="utf-8",
     )
 
+def configure_yesdesk_printer():
+    path = Path(sys.argv[0]).parent / "CustomActions/RemotePrinter.cpp"
+    content = path.read_text(encoding="utf-8")
+    for field in ("RD_PRINTER_PORT", "RD_PRINTER_NAME"):
+        content = content.replace(
+            f'{field} = L"RustDesk Printer";', f'{field} = L"YES Desk Printer";'
+        )
+    content = content.replace("RD_KEEP_SHARED_DRIVER = false;", "RD_KEEP_SHARED_DRIVER = true;")
+    path.write_text(content, encoding="utf-8")
+
+
 def replace_app_name_in_custom_actions(app_name):
     custion_actions_dir = Path(sys.argv[0]).parent.joinpath("CustomActions")
     for file_path in chain(custion_actions_dir.glob("*.cpp"), custion_actions_dir.glob("*.h")):
@@ -383,10 +394,6 @@ def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
         lines_new.append(
             f'{indent}<RegistryValue Type="integer" Name="WindowsInstaller" Value="1" />\n'
         )
-        if args.yesdesk:
-            lines_new.append(
-                f'{indent}<RegistryValue Type="string" Name="ExecutableName" Value="$(var.Executable)" />\n'
-            )
         for k, v in g_arpsystemcomponent.items():
             if "v" in v:
                 t = v["t"] if "t" in v is None else "string"
@@ -542,7 +549,7 @@ if __name__ == "__main__":
     if args.yesdesk:
         args.app_name = "YES Desk"
         args.manufacturer = "YES Apart"
-        args.arp = True
+        args.arp = False
     app_name = args.app_name
     executable = "YES_Desk.exe" if args.yesdesk else f"{app_name}.exe"
     upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, executable)
@@ -591,5 +598,7 @@ if __name__ == "__main__":
         sys.exit(-1)
 
     apply_display_name(args.display_name or args.app_name)
-    if not args.yesdesk and args.app_name != "RustDesk":
+    if args.yesdesk:
+        configure_yesdesk_printer()
+    elif app_name != "RustDesk":
         replace_app_name_in_custom_actions(args.app_name)
