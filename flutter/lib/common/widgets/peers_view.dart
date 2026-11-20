@@ -8,6 +8,7 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/ab_model.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:visibility_detector/visibility_detector.dart';
@@ -187,6 +188,27 @@ class _PeersViewState extends State<_PeersView>
       child: Consumer<Peers>(builder: (context, peers, child) {
         if (peers.peers.isEmpty) {
           gFFI.peerTabModel.setCurrentTabCachedPeers([]);
+          final message =
+              translate(_emptyMessages[widget.peers.loadEvent] ?? 'Empty');
+          final colors = Theme.of(context).extension<YesDeskColors>();
+          if (colors != null) {
+            return Center(
+              child: SingleChildScrollView(
+                primary: false,
+                padding: const EdgeInsets.all(YesDeskSpace.md),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.devices_outlined, size: 28, color: colors.muted),
+                    const SizedBox(height: YesDeskSpace.sm),
+                    Text(message,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            );
+          }
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -197,9 +219,7 @@ class _PeersViewState extends State<_PeersView>
                   size: 40,
                 ).paddingOnly(bottom: 10),
                 Text(
-                  translate(
-                    _emptyMessages[widget.peers.loadEvent] ?? 'Empty',
-                  ),
+                  message,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Theme.of(context).tabBarTheme.labelColor,

@@ -1,0 +1,15 @@
+# Codex task — YES Desk 2.0 / Sprint 1
+
+Work in B1ssmuth/rustdesk, branch feature/yesdesk-2.0. Read docs/YESDESK-2.0-ROADMAP.md first. Base for comparison is 67289830ea4a1a08fc6023360d0ab5cdf3d73796. Do not write to master, merge, deploy, publish a release, or overwrite nightly tags. The existing backend is SCTGDesk; its deployed version/config is not known. Do not change networking, auth, server configuration or encryption to accomplish UI work.
+
+## Step 1 — audit and baseline
+Inspect the actual repo, instructions, git status, upstream diff, Cargo/Flutter versions, vendored libs/hbb_common, FFI, existing desktop widgets, localization, CMake, Windows packaging and GitHub Actions. Read the workflow history and establish build/test commands. Do not run nuke_link.yml. Identify a way to run feature-branch CI without release publication or secrets exposure. Record exact commands/results (including environmental blockers) in docs/yesdesk-sprint1-audit.md. Do not claim tests passed unless executed.
+
+## Step 2 — implement a functional desktop redesign
+Create isolated reusable tokens and widgets in flutter/lib/yesdesk/. Prefer a compact native desktop workspace: graphite theme, restrained lime accent, accessible light/dark contrast, coherent typography, keyboard navigation and responsive sizing. Do not add proprietary fonts or unnecessary dependencies. Follow existing localization and accessibility patterns.
+Refactor desktop_home_page.dart and connection_page.dart; inspect related models and widgets before changes. Add a clear left-side navigation or equivalent shell, quick connect and real recent/favorite devices from existing models; show the local ID, temporary password and copy/regenerate controls in a deliberate support area. Preserve actual install prompts, online/error state, login, settings, address-book actions and remote connection flow. Use existing state and callbacks, not demo data or fake metrics. If a capability does not exist, omit it rather than stub a misleading control.
+Do not change mobile UI unnecessarily. Keep changes local and preserve lifecycle/dispose handling. Leave session toolbar redesign and backend integration for later.
+
+## Step 3 — verification and review
+Run Dart formatting on changed files; Flutter analysis and relevant tests using repository-compatible toolchains; add targeted widget tests for layout/actions including ru/en, light/dark, keyboard and resize where feasible. Check git diff for secret exposure, license preservation and accidental generated changes. Build Windows x64 test EXE/MSI if environment supports this without release publishing; otherwise document manual CI and smoke-test instructions. Preserve existing binary naming and MSI behavior until a separate migration task.
+Summarize changed files, design choices, testing results, known blockers and the manual SCTGDesk regression checklist. Use small reviewable commits on the feature branch; open a draft PR only if permitted. Stop before any release/merge. Do not expose internal configuration or private deployment details. Report exactly what is incomplete.
