@@ -44,7 +44,9 @@ hbbs, hbbr или rustdesk-api.
 соответствуют архиву. В манифесте понижена нижняя граница `meta` до 1.12.0
 для Flutter 3.22.3, который использует существующая генерация FFI. Все
 используемые аннотации доступны в 1.12.0. Во Flutter 3.24.5 resolver
-сохраняет `meta 1.15.0`.
+сохраняет `meta 1.15.0`. Новые криптографические зависимости используют
+лицензии MIT (Pointy Castle и PineNaCl) и BSD-2-Clause (asn1lib). Запрос в
+OSV по `dartssh2 4.1.0` при проверке 20 ноября 2026 года вернул пустой список.
 [Архив и патч](../flutter/third_party/dartssh2/UPSTREAM.md) ·
 [История изменений](https://pub.dev/packages/dartssh2/versions/4.1.0/changelog)
 

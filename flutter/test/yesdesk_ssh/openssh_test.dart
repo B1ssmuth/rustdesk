@@ -208,7 +208,7 @@ void main() {
       second.run.cancel();
       await second.ended.future.timeout(const Duration(seconds: 2));
       expect(second.phases.last, SshPhase.closed);
-    }, skip: _handshakeOnly);
+    }, skip: _port == null || _handshakeOnly);
 
     test('detects a dropped TCP connection to an established OpenSSH shell',
         () async {
@@ -234,7 +234,7 @@ void main() {
       outgoing!.destroy();
       await session.ended.future.timeout(const Duration(seconds: 8));
       expect(session.run.failure, SshFailure.disconnected);
-    }, skip: _handshakeOnly);
+    }, skip: _port == null || _handshakeOnly);
 
     test(
         'password authentication and real shell output leave no secrets in logs or metadata',
@@ -255,7 +255,7 @@ void main() {
           await File('${directory.path}/known-hosts.json').readAsString();
       expect(knownHosts, isNot(contains(_password)));
       expect(knownHosts, isNot(contains('output-no-log')));
-    }, skip: _password.isEmpty);
+    }, skip: _port == null || _password.isEmpty);
 
     test('reports invalid password without repeatedly submitting it', () async {
       final session = _Session(repository, SshAuth.password,
@@ -263,7 +263,7 @@ void main() {
       await session.start();
       expect(session.run.failure, SshFailure.authentication);
       expect(session.authenticationRequests, 1);
-    }, skip: _password.isEmpty);
+    }, skip: _port == null || _password.isEmpty);
 
     test('answers a keyboard-interactive challenge after host confirmation',
         () async {
@@ -275,6 +275,6 @@ void main() {
           session.phases,
           containsAllInOrder(
               [SshPhase.verifyingHost, SshPhase.authenticating]));
-    }, skip: _password.isEmpty);
+    }, skip: _port == null || _password.isEmpty);
   });
 }

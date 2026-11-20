@@ -239,7 +239,7 @@ class SshRun {
       throw const _SshCancelled();
     }
     try {
-      return await _untilEnded(_readKey(input), _timeout);
+      return await _readKey(input);
     } on TimeoutException {
       rethrow;
     } on _SshCancelled {
@@ -250,20 +250,53 @@ class SshRun {
     }
   }
 
-  static Future<List<SSHKeyPair>> _readKey(SshKeyInput input) =>
-      Isolate.run(() async {
-        final file = await File(input.path).open();
-        try {
-          final length = await file.length();
-          if (length < 1 || length > 256 * 1024) {
-            throw const FormatException('Invalid SSH key size');
-          }
-          return SSHKeyPair.fromPem(
-              utf8.decode(await file.read(length)), input.passphrase);
-        } finally {
-          await file.close();
-        }
+  Future<List<SSHKeyPair>> _readKey(SshKeyInput input) async {
+    final reply = ReceivePort();
+    Isolate? worker;
+    var finished = false;
+    try {
+      final start = Isolate.spawn(
+        _parseKey,
+        (input, reply.sendPort),
+        onExit: reply.sendPort,
+        onError: reply.sendPort,
+      ).then((isolate) {
+        worker = isolate;
+        if (finished) isolate.kill(priority: Isolate.immediate);
+        return reply.first;
       });
+      final result = await _untilEnded(start, _timeout);
+      if (result is List<SSHKeyPair>) return result;
+      throw const FormatException('Could not parse the SSH key');
+    } finally {
+      finished = true;
+      worker?.kill(priority: Isolate.immediate);
+      reply.close();
+    }
+  }
+
+  static Future<void> _parseKey((SshKeyInput, SendPort) request) async {
+    final (input, reply) = request;
+    try {
+      final file = await File(input.path).open();
+      late final List<SSHKeyPair> identities;
+      try {
+        final length = await file.length();
+        if (length < 1 || length > 256 * 1024) {
+          throw const FormatException('Invalid SSH key size');
+        }
+        identities = SSHKeyPair.fromPem(
+          utf8.decode(await file.read(length)),
+          input.passphrase,
+        );
+      } finally {
+        await file.close();
+      }
+      Isolate.exit(reply, identities);
+    } catch (_) {
+      Isolate.exit(reply);
+    }
+  }
 
   Future<SSHSocket> _openSocket() async {
     final task = await Socket.startConnect(

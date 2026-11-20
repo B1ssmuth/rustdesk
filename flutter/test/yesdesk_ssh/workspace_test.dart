@@ -43,7 +43,7 @@ class _WidgetRepository extends SshRepository {
 
   @override
   Future<({List<SshProfile> profiles, List<String> groups})> load() async =>
-      (profiles: profiles.values.toList(), groups: []);
+      (profiles: profiles.values.toList(), groups: <String>[]);
 
   @override
   Future<String?> save(SshProfile profile, {bool clearSecret = false}) async {
@@ -135,7 +135,11 @@ void main() {
         messenger.setMockMethodCallHandler(SystemChannels.platform, null));
 
     await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: SshTerminalView(tab: tab, labels: SshStrings('en'))),
+      home: Scaffold(
+        body: YesDeskTheme(
+          child: SshTerminalView(tab: tab, labels: SshStrings('en')),
+        ),
+      ),
     ));
     final terminalView = tester.widget<TerminalView>(find.byType(TerminalView));
     expect(terminalView.theme, TerminalThemes.defaultTheme);
