@@ -16,6 +16,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Device", "Device"),
         ("Platform", "Platform"),
         ("desk_tip", "Your desktop can be accessed with this ID and password."),
+        ("yesdesk_show_password", "Show password"),
+        ("yesdesk_hide_password", "Hide password"),
         ("yesdesk_share_id_tip", "Share this ID with the person connecting to your device."),
         ("yesdesk_connecting_status", "Connecting to the server…"),
         ("Quick Connect", "Quick connect"),

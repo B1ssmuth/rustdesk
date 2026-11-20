@@ -411,6 +411,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Accept sessions via click", "Принимать сеансы нажатием кнопки"),
         ("Accept sessions via both", "Принимать сеансы по паролю и нажатию кнопки"),
         ("Please wait for the remote side to accept your session request...", "Подождите, пока удалённая сторона примет ваш запрос на сеанс..."),
+        ("yesdesk_show_password", "Показать пароль"),
+        ("yesdesk_hide_password", "Скрыть пароль"),
         ("One-time Password", "Одноразовый пароль"),
         ("Use one-time password", "Использовать одноразовый пароль"),
         ("One-time password length", "Длина одноразового пароля"),

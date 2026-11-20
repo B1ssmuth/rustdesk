@@ -189,7 +189,8 @@ class _PeerCardState extends State<_PeerCard>
     final theme = Theme.of(context).textTheme;
     final leading = peer.platform.isEmpty
         ? const Icon(Icons.desktop_windows_outlined, size: 22)
-        : getPlatformImage(peer.platform, size: 22);
+        : getPlatformImage(peer.platform,
+            size: 18, color: YesDeskColors.of(context).text);
     final selection = Provider.of<PeerTabModel>(context);
     final action = selection.multiSelectionMode
         ? Center(
@@ -223,6 +224,7 @@ class _PeerCardState extends State<_PeerCard>
           detail: detail,
           platform: peer.platform.isEmpty ? '—' : peer.platform,
           status: status,
+          online: peer.online,
           leading: leading,
           action: action,
         );
@@ -243,10 +245,16 @@ class _PeerCardState extends State<_PeerCard>
                 action,
               ],
             ),
-            Text([id, status].join(' · '),
-                style: theme.bodySmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
+            Row(children: [
+              Expanded(
+                  child: Text(id,
+                      style: theme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis)),
+              Expanded(
+                  child:
+                      YesDeskDeviceStatus(label: status, online: peer.online)),
+            ]),
             if (detail.isNotEmpty)
               Flexible(
                   child: Text(detail,

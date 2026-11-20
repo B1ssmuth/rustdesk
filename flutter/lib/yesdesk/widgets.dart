@@ -326,6 +326,100 @@ class YesDeskWorkspaceLayout extends StatelessWidget {
   }
 }
 
+class YesDeskProtectedCredential extends StatefulWidget {
+  const YesDeskProtectedCredential({
+    super.key,
+    required this.label,
+    required this.password,
+    required this.showLabel,
+    required this.hideLabel,
+    required this.copyLabel,
+    required this.onCopy,
+    this.actions = const [],
+  });
+
+  final String label;
+  final String? password;
+  final String showLabel;
+  final String hideLabel;
+  final String copyLabel;
+  final VoidCallback? onCopy;
+  final List<Widget> actions;
+
+  @override
+  State<YesDeskProtectedCredential> createState() =>
+      _YesDeskProtectedCredentialState();
+}
+
+class _YesDeskProtectedCredentialState
+    extends State<YesDeskProtectedCredential> {
+  bool _revealed = false;
+
+  @override
+  void didUpdateWidget(covariant YesDeskProtectedCredential oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.password != widget.password) _revealed = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final password = widget.password;
+    return YesDeskCredential(
+      label: widget.label,
+      value: password == null ? '—' : (_revealed ? password : '••••••'),
+      copyLabel: widget.copyLabel,
+      onCopy: widget.onCopy,
+      actions: [
+        if (password != null)
+          YesDeskIconButton(
+            label: _revealed ? widget.hideLabel : widget.showLabel,
+            icon: _revealed
+                ? Icons.visibility_off_outlined
+                : Icons.visibility_outlined,
+            onPressed: () => setState(() => _revealed = !_revealed),
+          ),
+        ...widget.actions,
+      ],
+    );
+  }
+}
+
+class YesDeskDeviceStatus extends StatelessWidget {
+  const YesDeskDeviceStatus({
+    super.key,
+    required this.label,
+    required this.online,
+  });
+
+  final String label;
+  final bool online;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = YesDeskColors.of(context);
+    final color = online ? colors.online : colors.offline;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          child: const SizedBox.square(dimension: 7),
+        ),
+        const SizedBox(width: YesDeskSpace.sm),
+        Flexible(
+          child: Text(label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+        ),
+      ],
+    );
+  }
+}
+
 /// Shared column geometry for the desktop device table and its header.
 class YesDeskDeviceRow extends StatelessWidget {
   const YesDeskDeviceRow({
@@ -335,6 +429,7 @@ class YesDeskDeviceRow extends StatelessWidget {
     required this.platform,
     required this.status,
     this.detail = '',
+    this.online,
     this.leading,
     this.action,
     this.header = false,
@@ -345,6 +440,7 @@ class YesDeskDeviceRow extends StatelessWidget {
   final String platform;
   final String status;
   final String detail;
+  final bool? online;
   final Widget? leading;
   final Widget? action;
   final bool header;
@@ -367,15 +463,15 @@ class YesDeskDeviceRow extends StatelessWidget {
           .join(' · ');
       return Ink(
         decoration: BoxDecoration(
-          color: header ? colors.raised : colors.surface,
+          color: header ? colors.raised : null,
           border: Border(bottom: BorderSide(color: colors.outline)),
         ),
         child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: header ? 36 : 50),
+          constraints: BoxConstraints(minHeight: header ? 30 : 42),
           child: Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: YesDeskSpace.md,
-              vertical: YesDeskSpace.xs,
+              vertical: 2,
             ),
             child: Row(children: [
               Expanded(
@@ -408,7 +504,12 @@ class YesDeskDeviceRow extends StatelessWidget {
                 Expanded(flex: 2, child: cell(platform)),
               ],
               const SizedBox(width: YesDeskSpace.sm),
-              Expanded(flex: columns ? 2 : 3, child: cell(status)),
+              Expanded(
+                flex: columns ? 2 : 3,
+                child: online == null
+                    ? cell(status)
+                    : YesDeskDeviceStatus(label: status, online: online!),
+              ),
               SizedBox(width: 40, child: action),
             ]),
           ),

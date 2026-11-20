@@ -47,7 +47,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   var watchIsInputMonitoring = false;
   var watchIsCanRecordAudio = false;
   Timer? _updateTimer;
-  bool isCardClosed = false;
+  final _closedHelpCards = <String>{};
 
   bool _showSupport = false;
   final RxBool _block = false.obs;
@@ -182,7 +182,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (bind.isCustomClient()) Align(child: loadPowered(context)),
                 Align(child: _logo),
                 if (!outgoingOnly) ...[
                   Text(translate('Your Desktop'),
@@ -200,7 +199,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   _buildCredentials(),
                   _buildPasswordWarning(),
                 ],
-                Obx(() => buildHelpCards(stateGlobal.updateUrl.value)),
+                buildHelpCards(),
                 buildPluginEntry(),
               ],
             ),
@@ -268,13 +267,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 onCopy: model.hasServerId ? () => _copyCredential(id) : null,
               ),
               const Divider(height: YesDeskSpace.lg),
-              YesDeskCredential(
+              YesDeskProtectedCredential(
                 label: translate('One-time Password'),
-                value: showOneTime &&
-                        temporaryPassword.isNotEmpty &&
-                        temporaryPassword != '-'
-                    ? temporaryPassword
-                    : '—',
+                showLabel: translate('yesdesk_show_password'),
+                hideLabel: translate('yesdesk_hide_password'),
+                password: copyPassword ? temporaryPassword : null,
                 copyLabel: copyLabel,
                 onCopy: copyPassword
                     ? () => _copyCredential(temporaryPassword)
@@ -340,54 +337,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     );
   }
 
-  Widget buildHelpCards(String updateUrl) {
-    if (!bind.isCustomClient() &&
-        updateUrl.isNotEmpty &&
-        !isCardClosed &&
-        bind.mainUriPrefixSync().contains('rustdesk')) {
-      final isToUpdate = (isWindows || isMacOS) && bind.mainIsInstalled();
-      String btnText = isToUpdate ? 'Update' : 'Download';
-      GestureTapCallback onPressed = () async {
-        final Uri url = Uri.parse('https://rustdesk.com/download');
-        await launchUrl(url);
-      };
-      if (isToUpdate) {
-        onPressed = () {
-          handleUpdate(updateUrl);
-        };
-      }
-      return buildInstallCard(
-          "Status",
-          "${translate("new-version-of-{${bind.mainGetAppNameSync()}}-tip")} (${bind.mainGetNewVersion()}).",
-          btnText,
-          onPressed,
-          closeButton: true,
-          help: isToUpdate ? 'Changelog' : null,
-          link: isToUpdate
-              ? 'https://github.com/rustdesk/rustdesk/releases/tag/${bind.mainGetNewVersion()}'
-              : null);
-    }
+  Widget buildHelpCards() {
     if (systemError.isNotEmpty) {
       return buildInstallCard("Error", systemError, "", null);
     }
 
-    if (isWindows && !bind.isDisableInstallation()) {
-      if (!bind.mainIsInstalled()) {
-        return buildInstallCard(
-            "", bind.isOutgoingOnly() ? "" : "install_tip", "Install",
-            () async {
-          await rustDeskWinManager.closeAllSubWindows();
-          bind.mainGotoInstall();
-        });
-      } else if (bind.mainIsInstalledLowerVersion()) {
-        return buildInstallCard(
-            "Status", "Your installation is lower version.", "Click to upgrade",
-            () async {
-          await rustDeskWinManager.closeAllSubWindows();
-          bind.mainUpdateMe();
-        });
-      }
-    } else if (isMacOS) {
+    if (isMacOS) {
       final isOutgoingOnly = bind.isOutgoingOnly();
       if (!(isOutgoingOnly || bind.mainIsCanScreenRecording(prompt: false))) {
         return buildInstallCard("Permissions", "config_screen", "Configure",
@@ -495,8 +450,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     bool closeButton = false,
     String? closeOption,
   }) {
-    if (bind.mainGetBuildinOption(key: kOptionHideHelpCards) == 'Y' &&
-        content != 'install_daemon_tip') {
+    if ((bind.mainGetBuildinOption(key: kOptionHideHelpCards) == 'Y' &&
+            content != 'install_daemon_tip' &&
+            title != 'Error') ||
+        _closedHelpCards.contains(content)) {
       return const SizedBox.shrink();
     }
 
@@ -505,7 +462,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         await bind.mainSetLocalOption(key: closeOption, value: 'N');
         if (bind.mainGetLocalOption(key: closeOption) != 'N') return;
       }
-      if (mounted) setState(() => isCardClosed = true);
+      if (mounted) setState(() => _closedHelpCards.add(content));
     }
 
     return Builder(builder: (context) {
