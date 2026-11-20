@@ -43,7 +43,7 @@ jobs:
           flutter analyze --no-pub --no-fatal-infos lib/common/widgets/peer_tab_page.dart
       - name: Run units, widgets and workspace regressions
         working-directory: flutter
-        run: flutter test --no-pub
+        run: flutter test --no-pub --reporter expanded
       - name: Install OpenSSH server
         if: runner.os == 'Linux'
         run: |

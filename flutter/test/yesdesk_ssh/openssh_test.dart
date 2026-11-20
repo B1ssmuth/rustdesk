@@ -250,11 +250,11 @@ void main() {
           zoneSpecification: ZoneSpecification(
               print: (_, __, ___, message) => logged.add(message)));
       expect(session.authenticationRequests, 1);
-      expect(logged, isEmpty);
+      expect(logged.length, 0);
       final knownHosts =
           await File('${directory.path}/known-hosts.json').readAsString();
-      expect(knownHosts, isNot(contains(_password)));
-      expect(knownHosts, isNot(contains('output-no-log')));
+      expect(knownHosts.contains(_password), isFalse);
+      expect(knownHosts.contains('output-no-log'), isFalse);
     }, skip: _port == null || _password.isEmpty);
 
     test('reports invalid password without repeatedly submitting it', () async {

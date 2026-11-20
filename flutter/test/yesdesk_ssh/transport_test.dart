@@ -40,7 +40,8 @@ void main() {
     await server.close();
     final phases = <SshPhase>[];
     final run = SshRun(
-        profile: testProfile(port),
+        // Windows can retry a refused TCP SYN before returning WSAECONNREFUSED.
+        profile: testProfile(port, timeout: 8),
         trust: repository,
         prompts: promptsWithoutCredentials(),
         onPhase: phases.add,
