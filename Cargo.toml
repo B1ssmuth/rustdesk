@@ -4,7 +4,7 @@ version = "1.4.6"
 authors = ["yesdesk <i.bogdanov@yesapart.com>"]
 edition = "2021"
 build= "build.rs"
-description = "YES Desk Remote Desktop"
+description = "YES Desk IT Workspace"
 default-run = "rustdesk"
 rust-version = "1.75"
 

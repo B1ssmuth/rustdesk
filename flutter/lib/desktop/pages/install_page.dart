@@ -8,7 +8,7 @@ import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:get/get.dart';
 import 'package:path/path.dart';
-import 'package:url_launcher/url_launcher_string.dart';
+import 'package:flutter_hbb/yesdesk/widgets.dart';
 import 'package:window_manager/window_manager.dart';
 
 class InstallPage extends StatefulWidget {
@@ -92,6 +92,7 @@ class _InstallPageBodyState extends State<_InstallPageBody>
   @override
   void dispose() {
     windowManager.removeListener(this);
+    controller.dispose();
     super.dispose();
   }
 
@@ -112,7 +113,7 @@ class _InstallPageBodyState extends State<_InstallPageBody>
         children: [
           Obx(
             () => Checkbox(
-              visualDensity: VisualDensity(horizontal: -4, vertical: -4),
+              visualDensity: VisualDensity.standard,
               value: option.value,
               onChanged: (v) =>
                   btnEnabled.value ? option.value = !option.value : null,
@@ -129,15 +130,14 @@ class _InstallPageBodyState extends State<_InstallPageBody>
   @override
   Widget build(BuildContext context) {
     final double em = 13;
-    final isDarkTheme = MyTheme.currentThemeMode() == ThemeMode.dark;
     return Scaffold(
         backgroundColor: null,
         body: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(translate('Installation'),
-                  style: Theme.of(context).textTheme.headlineMedium),
+              Text('$appName · ${translate('Installation')}',
+                  style: Theme.of(context).textTheme.titleLarge),
               Row(
                 children: [
                   Text('${translate('Installation Path')}:')
@@ -166,45 +166,19 @@ class _InstallPageBodyState extends State<_InstallPageBody>
               Option(desktopicon, label: 'Create desktop icon')
                   .marginOnly(bottom: 7),
               Option(printer, label: 'Install {$appName} Printer'),
-              Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: isDarkTheme
-                        ? Color.fromARGB(135, 87, 87, 90)
-                        : Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey),
+              YesDeskPanel(
+                child: ListTile(
+                  leading: const Icon(Icons.description_outlined),
+                  title: Text(translate('Open Source Licenses')),
+                  subtitle: Text(translate('yesdesk_install_license_tip')),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => showLicensePage(
+                    context: context,
+                    applicationName: appName,
+                    applicationLegalese: translate('yesdesk_upstream_notice'),
                   ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline_rounded, size: 32)
-                          .marginOnly(right: 16),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(translate('agreement_tip'))
-                              .marginOnly(bottom: em),
-                          InkWell(
-                            hoverColor: Colors.transparent,
-                            onTap: () => launchUrlString(
-                                'https://rustdesk.com/privacy.html'),
-                            child: Tooltip(
-                              message: 'https://rustdesk.com/privacy.html',
-                              child: Row(children: [
-                                Icon(Icons.launch_outlined, size: 16)
-                                    .marginOnly(right: 5),
-                                Text(
-                                  translate('End-user license agreement'),
-                                  style: const TextStyle(
-                                      decoration: TextDecoration.underline),
-                                )
-                              ]),
-                            ),
-                          ),
-                        ],
-                      )
-                    ],
-                  )).marginSymmetric(vertical: 2 * em),
+                ),
+              ).marginSymmetric(vertical: 2 * em),
               Row(
                 children: [
                   Expanded(

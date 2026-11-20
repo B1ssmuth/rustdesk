@@ -37,32 +37,33 @@ class YesDeskColors extends ThemeExtension<YesDeskColors> {
   final Color warning;
   final Color error;
 
+  // YES Apart global.css supplies the neutral surfaces and warm emphasis.
   static const light = YesDeskColors(
-    canvas: Color(0xFFF5F6F3),
+    canvas: Color(0xFFF3F3F3),
     surface: Color(0xFFFFFFFF),
-    raised: Color(0xFFEBEEE8),
-    outline: Color(0xFFD5DAD2),
-    text: Color(0xFF202620),
-    muted: Color(0xFF505C53),
-    accent: Color(0xFF416217),
+    raised: Color(0xFFD6D6D6),
+    outline: Color(0xFFCFC8C3),
+    text: Color(0xFF322D29),
+    muted: Color(0xFF575757),
+    accent: Color(0xFF4D4743),
     onAccent: Color(0xFFFFFFFF),
-    selected: Color(0xFFE6EFD7),
-    warning: Color(0xFF854C13),
-    error: Color(0xFFAC2F36),
+    selected: Color(0xFFF8E7DB),
+    warning: Color(0xFF4D4743),
+    error: Color(0xFF322D29),
   );
 
   static const dark = YesDeskColors(
-    canvas: Color(0xFF151719),
-    surface: Color(0xFF1D2023),
-    raised: Color(0xFF292D31),
-    outline: Color(0xFF3A4046),
-    text: Color(0xFFF2F5EF),
-    muted: Color(0xFFABB5AE),
-    accent: Color(0xFFB7E879),
-    onAccent: Color(0xFF1B2712),
-    selected: Color(0xFF2D3926),
-    warning: Color(0xFFF1BE75),
-    error: Color(0xFFFF9398),
+    canvas: Color(0xFF322D29),
+    surface: Color(0xFF4D4743),
+    raised: Color(0xFF575757),
+    outline: Color(0xFF918882),
+    text: Color(0xFFF3F3F3),
+    muted: Color(0xFFD6D6D6),
+    accent: Color(0xFFF8E7DB),
+    onAccent: Color(0xFF322D29),
+    selected: Color(0xFF575757),
+    warning: Color(0xFFF8E7DB),
+    error: Color(0xFFF3F3F3),
   );
 
   static YesDeskColors of(BuildContext context) =>
@@ -102,6 +103,12 @@ class YesDeskTheme extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final base = Theme.of(context);
+    if (base.extension<YesDeskColors>() != null) return child;
+    return Theme(data: apply(base), child: child);
+  }
+
+  static ThemeData apply(ThemeData base) {
+    if (base.extension<YesDeskColors>() != null) return base;
     final colors = base.brightness == Brightness.dark
         ? YesDeskColors.dark
         : YesDeskColors.light;
@@ -113,118 +120,164 @@ class YesDeskTheme extends StatelessWidget {
       borderSide: BorderSide(color: colors.outline),
     );
 
-    return Theme(
-      data: base.copyWith(
-        extensions: [...base.extensions.values, colors],
-        colorScheme: base.colorScheme.copyWith(
-          primary: colors.accent,
-          onPrimary: colors.onAccent,
-          secondary: colors.accent,
-          onSecondary: colors.onAccent,
-          surface: colors.surface,
-          onSurface: colors.text,
-          // Pre-Material 3 peer controls still read the background property.
-          // ignore: deprecated_member_use
-          background: colors.surface,
-          // ignore: deprecated_member_use
-          onBackground: colors.text,
-          error: colors.error,
-        ),
-        scaffoldBackgroundColor: colors.canvas,
-        canvasColor: colors.surface,
-        cardColor: colors.surface,
-        dialogBackgroundColor: colors.surface,
-        dividerColor: colors.outline,
-        hintColor: colors.muted,
-        focusColor: colors.selected,
-        hoverColor: colors.raised,
-        iconTheme: base.iconTheme.copyWith(color: colors.muted),
-        tabBarTheme: base.tabBarTheme.copyWith(labelColor: colors.muted),
-        textTheme: base.textTheme
-            .apply(bodyColor: colors.text, displayColor: colors.text)
-            .copyWith(
-              titleLarge: TextStyle(
-                color: colors.text,
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
-                height: 1.15,
-              ),
-              titleMedium: TextStyle(
-                color: colors.text,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-              ),
-              titleSmall: TextStyle(color: colors.text, fontSize: 13),
-              bodyMedium: TextStyle(color: colors.text, fontSize: 13),
-              bodySmall: TextStyle(
-                color: colors.muted,
-                fontSize: 12,
-                height: 1.35,
-              ),
-              labelLarge: TextStyle(
-                color: colors.text,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-        textSelectionTheme: TextSelectionThemeData(
-          cursorColor: colors.accent,
-          selectionColor: colors.accent.withOpacity(.28),
-          selectionHandleColor: colors.accent,
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: colors.canvas,
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: YesDeskSpace.md,
-            vertical: YesDeskSpace.md,
-          ),
-          hintStyle: TextStyle(color: colors.muted),
-          border: border,
-          enabledBorder: border,
-          focusedBorder: border.copyWith(
-            borderSide: BorderSide(color: colors.accent, width: 2),
-          ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            elevation: 0,
-            minimumSize: const Size(0, 40),
-            backgroundColor: colors.accent,
-            foregroundColor: colors.onAccent,
-            disabledBackgroundColor: colors.raised,
-            disabledForegroundColor: colors.muted,
-            shape: shape,
-          ).copyWith(
-            side: WidgetStateProperty.resolveWith((states) {
-              return states.contains(WidgetState.focused)
-                  ? BorderSide(color: colors.onAccent, width: 2)
-                  : null;
-            }),
-          ),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
-            foregroundColor: colors.accent,
-            minimumSize: const Size(0, 36),
-            shape: shape,
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: colors.text,
-            minimumSize: const Size(0, 36),
-            side: BorderSide(color: colors.outline),
-            shape: shape,
-          ),
-        ),
-        popupMenuTheme: PopupMenuThemeData(
+    return base.copyWith(
+      extensions: [...base.extensions.values, colors],
+      colorScheme: base.colorScheme.copyWith(
+        primary: colors.accent,
+        onPrimary: colors.onAccent,
+        secondary: colors.accent,
+        onSecondary: colors.onAccent,
+        surface: colors.surface,
+        onSurface: colors.text,
+        // Pre-Material 3 peer controls still read the background property.
+        // ignore: deprecated_member_use
+        background: colors.surface,
+        // ignore: deprecated_member_use
+        onBackground: colors.text,
+        error: colors.error,
+      ),
+      scaffoldBackgroundColor: colors.canvas,
+      canvasColor: colors.surface,
+      cardColor: colors.surface,
+      dialogBackgroundColor: colors.surface,
+      dialogTheme: DialogTheme(
+        backgroundColor: colors.surface,
+        elevation: 12,
+        shape: shape.copyWith(side: BorderSide(color: colors.outline)),
+      ),
+      cardTheme: CardTheme(
+        color: colors.surface,
+        elevation: 0,
+        shape: shape.copyWith(side: BorderSide(color: colors.outline)),
+      ),
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
           color: colors.surface,
-          shape: shape.copyWith(side: BorderSide(color: colors.outline)),
+          border: Border.all(color: colors.outline),
+          borderRadius: BorderRadius.circular(YesDeskSpace.radius),
+        ),
+        textStyle: TextStyle(color: colors.text, fontSize: 12),
+      ),
+      dividerTheme: DividerThemeData(color: colors.outline, thickness: 1),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: colors.surface,
+        contentTextStyle: TextStyle(color: colors.text),
+        shape: shape,
+      ),
+      listTileTheme: base.listTileTheme.copyWith(
+        textColor: colors.text,
+        iconColor: colors.muted,
+        selectedColor: colors.accent,
+        selectedTileColor: colors.selected,
+      ),
+      checkboxTheme: base.checkboxTheme.copyWith(
+        fillColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? colors.accent : null),
+        checkColor: WidgetStatePropertyAll(colors.onAccent),
+      ),
+      radioTheme: base.radioTheme.copyWith(
+        fillColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? colors.accent : null),
+      ),
+      switchTheme: base.switchTheme.copyWith(
+        thumbColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? colors.accent : null),
+        trackColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? colors.outline : null),
+      ),
+      dividerColor: colors.outline,
+      hintColor: colors.muted,
+      primaryColor: colors.accent,
+      splashColor: colors.accent.withOpacity(.14),
+      focusColor: colors.selected,
+      hoverColor: colors.raised,
+      iconTheme: base.iconTheme.copyWith(color: colors.muted),
+      tabBarTheme: base.tabBarTheme.copyWith(labelColor: colors.muted),
+      textTheme: base.textTheme
+          .apply(bodyColor: colors.text, displayColor: colors.text)
+          .copyWith(
+            titleLarge: TextStyle(
+              color: colors.text,
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              height: 1.15,
+            ),
+            titleMedium: TextStyle(
+              color: colors.text,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+            titleSmall: TextStyle(color: colors.text, fontSize: 13),
+            bodyMedium: TextStyle(color: colors.text, fontSize: 13),
+            bodySmall: TextStyle(
+              color: colors.muted,
+              fontSize: 12,
+              height: 1.35,
+            ),
+            labelLarge: TextStyle(
+              color: colors.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: colors.accent,
+        selectionColor: colors.accent.withOpacity(.28),
+        selectionHandleColor: colors.accent,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: colors.canvas,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: YesDeskSpace.md,
+          vertical: YesDeskSpace.md,
+        ),
+        hintStyle: TextStyle(color: colors.muted),
+        labelStyle: TextStyle(color: colors.muted),
+        floatingLabelStyle: TextStyle(color: colors.accent),
+        border: border,
+        enabledBorder: border,
+        focusedBorder: border.copyWith(
+          borderSide: BorderSide(color: colors.accent, width: 2),
         ),
       ),
-      child: child,
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          minimumSize: const Size(0, 40),
+          backgroundColor: colors.accent,
+          foregroundColor: colors.onAccent,
+          disabledBackgroundColor: colors.raised,
+          disabledForegroundColor: colors.muted,
+          shape: shape,
+        ).copyWith(
+          side: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.focused)
+                ? BorderSide(color: colors.onAccent, width: 2)
+                : null;
+          }),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: colors.accent,
+          minimumSize: const Size(0, 40),
+          shape: shape,
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: colors.text,
+          minimumSize: const Size(0, 40),
+          side: BorderSide(color: colors.outline),
+          shape: shape,
+        ),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: colors.surface,
+        shape: shape.copyWith(side: BorderSide(color: colors.outline)),
+      ),
     );
   }
 }

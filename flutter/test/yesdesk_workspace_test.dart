@@ -124,7 +124,7 @@ void main() {
     expect(find.byKey(inputKey), findsNothing);
     expect(find.text('Your desktop'), findsOneWidget);
 
-    tester.view.physicalSize = const Size(900, 700);
+    tester.view.physicalSize = const Size(1120, 700);
     await tester.pumpAndSettle();
     expect(find.text('remote-device'), findsOneWidget);
     expect(find.text('Your desktop'), findsOneWidget);
@@ -180,6 +180,73 @@ void main() {
     expect(copies, 1);
     expect(refreshes, 1);
     expect(find.byTooltip('Копировать ID'), findsNothing);
+  });
+
+  testWidgets('device table reflows and keeps action available',
+      (tester) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(820, 500);
+    var actions = 0;
+    await tester.pumpWidget(_app(
+      Column(children: [
+        const YesDeskDeviceRow(
+          header: true,
+          name: 'Устройство',
+          id: 'ID',
+          platform: 'Платформа',
+          status: 'Статус',
+        ),
+        YesDeskDeviceRow(
+          name: 'Длинное имя рабочего компьютера из адресной книги',
+          id: '123 456 789',
+          platform: 'Windows',
+          status: 'В сети',
+          detail: 'support-host',
+          action: YesDeskIconButton(
+            label: 'Ещё',
+            icon: Icons.more_horiz,
+            onPressed: () => actions++,
+          ),
+        ),
+      ]),
+      brightness: Brightness.dark,
+      language: 'ru',
+    ));
+    expect(find.text('Windows'), findsOneWidget);
+    expect(find.text('123 456 789'), findsOneWidget);
+    await tester.tap(find.byTooltip('Ещё'));
+    expect(actions, 1);
+
+    tester.view.physicalSize = const Size(350, 500);
+    await tester.pumpAndSettle();
+    expect(find.text('Windows'), findsNothing);
+    expect(find.text('123 456 789 · support-host'), findsOneWidget);
+    expect(find.text('В сети'), findsOneWidget);
+    await tester.tap(find.byTooltip('Ещё'));
+    expect(actions, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('system theme follows platform brightness', (tester) async {
+    final dispatcher = tester.platformDispatcher;
+    addTearDown(dispatcher.clearPlatformBrightnessTestValue);
+    dispatcher.platformBrightnessTestValue = Brightness.light;
+    const marker = ValueKey('theme-surface');
+    await tester.pumpWidget(MaterialApp(
+      theme: YesDeskTheme.apply(ThemeData.light()),
+      darkTheme: YesDeskTheme.apply(ThemeData.dark()),
+      themeMode: ThemeMode.system,
+      home: const Scaffold(body: SizedBox(key: marker)),
+    ));
+    expect(YesDeskColors.of(tester.element(find.byKey(marker))),
+        YesDeskColors.light);
+
+    dispatcher.platformBrightnessTestValue = Brightness.dark;
+    await tester.pumpAndSettle();
+    expect(YesDeskColors.of(tester.element(find.byKey(marker))),
+        YesDeskColors.dark);
   });
 
   test('both palettes meet AA contrast for text, accents and warning states',

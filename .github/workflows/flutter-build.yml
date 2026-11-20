@@ -152,24 +152,11 @@ jobs:
       - name: Build msi
         shell: pwsh
         run: |
-          # 1. Создаем YES_Desk.exe, но ОСТАВЛЯЕМ rustdesk.exe (он нужен препроцессору)
+          # Keep the installed executable and MSI identity used by previous builds.
           Copy-Item "./rustdesk/rustdesk.exe" "./rustdesk/YES_Desk.exe"
-          
-          # 2. ПАТЧИМ исходники MSI, чтобы они устанавливали файл как YES_Desk.exe
-          $msiFiles = Get-ChildItem -Path "./res/msi/Package" -Recurse -Include *.wxs,*.wxl,*.wixproj
-          foreach ($f in $msiFiles) {
-            (Get-Content $f.FullName) `
-              -replace 'rustdesk.exe', 'YES_Desk.exe' `
-              -replace 'RustDesk.exe', 'YES_Desk.exe' `
-              -replace 'RustDesk', 'YES Desk' `
-              | Set-Content $f.FullName -Encoding UTF8
-          }
-
           pushd ./res/msi
-          # 3. Препроцессор создает переменные. Теперь он найдет rustdesk.exe и не упадет.
-          python preprocess.py --arp -d ../../rustdesk
-          
-          # 4. Сборка самого MSI
+          python preprocess.py --arp -d ../../rustdesk --display-name 'YES Desk' --manufacturer 'YES Apart' --product-url 'https://github.com/B1ssmuth/rustdesk' --support-url 'https://github.com/B1ssmuth/rustdesk/issues'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           nuget restore msi.sln
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
           popd

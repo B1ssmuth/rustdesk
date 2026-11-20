@@ -193,7 +193,7 @@ class ConnectionManagerState extends State<ConnectionManager>
               showClose: true,
               onWindowCloseButton: handleWindowCloseButton,
               controller: serverModel.tabController,
-              selectedBorderColor: MyTheme.accent,
+              selectedBorderColor: Theme.of(context).colorScheme.primary,
               maxLabelWidth: 100,
               tail: null, //buildScrollJumper(),
               tabBuilder: (key, icon, label, themeConf) {
@@ -440,17 +440,12 @@ class _CmHeaderState extends State<_CmHeader>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final colors = Theme.of(context).colorScheme;
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10.0),
-        gradient: LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [
-            Color(0xff00bfe1),
-            Color(0xff0071ff),
-          ],
-        ),
+        color: colors.surface,
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       margin: EdgeInsets.symmetric(horizontal: 5.0, vertical: 10.0),
       padding: EdgeInsets.only(
@@ -472,7 +467,7 @@ class _CmHeaderState extends State<_CmHeader>
                     child: Text(
                   client.name,
                   style: TextStyle(
-                    color: Colors.white,
+                    color: colors.onSurface,
                     fontWeight: FontWeight.bold,
                     fontSize: 20,
                     overflow: TextOverflow.ellipsis,
@@ -482,35 +477,43 @@ class _CmHeaderState extends State<_CmHeader>
                 FittedBox(
                   child: Text(
                     "(${client.peerId})",
-                    style: TextStyle(color: Colors.white, fontSize: 14),
+                    style: TextStyle(color: colors.onSurface, fontSize: 14),
                   ),
                 ),
                 if (client.type_() == ClientType.terminal)
                   FittedBox(
                     child: Text(
                       translate("Terminal"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(
+                          color: colors.onSurface.withOpacity(.8),
+                          fontSize: 12),
                     ),
                   ),
                 if (client.type_() == ClientType.file)
                   FittedBox(
                     child: Text(
                       translate("File Transfer"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(
+                          color: colors.onSurface.withOpacity(.8),
+                          fontSize: 12),
                     ),
                   ),
                 if (client.type_() == ClientType.camera)
                   FittedBox(
                     child: Text(
                       translate("View Camera"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(
+                          color: colors.onSurface.withOpacity(.8),
+                          fontSize: 12),
                     ),
                   ),
                 if (client.portForward.isNotEmpty)
                   FittedBox(
                     child: Text(
                       "Port Forward: ${client.portForward}",
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(
+                          color: colors.onSurface.withOpacity(.8),
+                          fontSize: 12),
                     ),
                   ),
                 SizedBox(height: 10.0),
@@ -523,7 +526,7 @@ class _CmHeaderState extends State<_CmHeader>
                               ? translate("Disconnected")
                               : translate("Connected")
                           : "${translate("Request access to your device")}...",
-                      style: TextStyle(color: Colors.white),
+                      style: TextStyle(color: colors.onSurface),
                     ).marginOnly(right: 8.0),
                     if (client.authorized)
                       Obx(
@@ -531,7 +534,7 @@ class _CmHeaderState extends State<_CmHeader>
                           formatDurationToTime(
                             Duration(seconds: _time.value),
                           ),
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(color: colors.onSurface),
                         ),
                       )
                   ],

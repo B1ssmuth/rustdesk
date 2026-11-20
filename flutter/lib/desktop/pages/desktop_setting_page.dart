@@ -19,6 +19,9 @@ import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/plugin/manager.dart';
 import 'package:flutter_hbb/plugin/widgets/desktop_settings.dart';
+import 'package:flutter_hbb/yesdesk/identity.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
+import 'package:flutter_hbb/yesdesk/widgets.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -27,18 +30,15 @@ import 'package:url_launcher/url_launcher_string.dart';
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
 
-const double _kTabWidth = 200;
-const double _kTabHeight = 42;
-const double _kCardFixedWidth = 540;
+const double _kTabWidth = 212;
+const double _kCardFixedWidth = 760;
 const double _kCardLeftMargin = 15;
 const double _kContentHMargin = 15;
 const double _kContentHSubMargin = _kContentHMargin + 33;
 const double _kCheckBoxLeftMargin = 10;
 const double _kRadioLeftMargin = 10;
 const double _kListViewBottomMargin = 15;
-const double _kTitleFontSize = 20;
 const double _kContentFontSize = 15;
-const Color _accentColor = MyTheme.accent;
 const String _kSettingPageControllerTag = 'settingPageController';
 const String _kSettingPageTabKeyTag = 'settingPageTabKey';
 
@@ -276,44 +276,44 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
-      body: _buildBlock(
-        children: <Widget>[
-          SizedBox(
-            width: _kTabWidth,
-            child: Column(
-              children: [
-                _header(context),
-                Flexible(child: _listView(tabs: _settingTabs())),
-              ],
-            ),
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: Container(
-              color: Theme.of(context).scaffoldBackgroundColor,
-              child: PageView(
-                controller: controller,
-                physics: NeverScrollableScrollPhysics(),
-                children: _children(),
+    return LayoutBuilder(builder: (context, constraints) {
+      final compact = !isWeb && constraints.maxWidth < 680;
+      return Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        body: _buildBlock(
+          children: <Widget>[
+            SizedBox(
+              width: compact ? 60 : _kTabWidth,
+              child: Column(
+                children: [
+                  if (!compact) _header(context),
+                  Flexible(
+                      child: _listView(tabs: _settingTabs(), compact: compact)),
+                ],
               ),
             ),
-          )
-        ],
-      ),
-    );
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: Container(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                child: PageView(
+                  controller: controller,
+                  physics: NeverScrollableScrollPhysics(),
+                  children: _children(),
+                ),
+              ),
+            )
+          ],
+        ),
+      );
+    });
   }
 
   Widget _header(BuildContext context) {
     final settingsText = Text(
       translate('Settings'),
       textAlign: TextAlign.left,
-      style: const TextStyle(
-        color: _accentColor,
-        fontSize: _kTitleFontSize,
-        fontWeight: FontWeight.w400,
-      ),
+      style: Theme.of(context).textTheme.titleLarge,
     );
     return Row(
       children: [
@@ -344,53 +344,42 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
     );
   }
 
-  Widget _listView({required List<_TabInfo> tabs}) {
-    final scrollController = ScrollController();
+  Widget _listView({required List<_TabInfo> tabs, required bool compact}) {
     return ListView(
-      controller: scrollController,
-      children: tabs.map((tab) => _listItem(tab: tab)).toList(),
-    );
-  }
-
-  Widget _listItem({required _TabInfo tab}) {
-    return Obx(() {
-      bool selected = tab.key == selectedTab.value;
-      return SizedBox(
-        width: _kTabWidth,
-        height: _kTabHeight,
-        child: InkWell(
-          onTap: () {
-            if (selectedTab.value != tab.key) {
-              int index = DesktopSettingPage.tabKeys.indexOf(tab.key);
-              if (index == -1) {
-                return;
-              }
+      padding: const EdgeInsets.all(YesDeskSpace.sm),
+      children: tabs.map((tab) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: YesDeskSpace.xs),
+          child: Obx(() {
+            final selected = tab.key == selectedTab.value;
+            void select() {
+              if (selected) return;
+              final index = DesktopSettingPage.tabKeys.indexOf(tab.key);
+              if (index < 0) return;
               controller.jumpToPage(index);
+              selectedTab.value = tab.key;
             }
-            selectedTab.value = tab.key;
-          },
-          child: Row(children: [
-            Container(
-              width: 4,
-              height: _kTabHeight * 0.7,
-              color: selected ? _accentColor : null,
-            ),
-            Icon(
-              selected ? tab.selected : tab.unselected,
-              color: selected ? _accentColor : null,
-              size: 20,
-            ).marginOnly(left: 13, right: 10),
-            Text(
-              translate(tab.label),
-              style: TextStyle(
-                  color: selected ? _accentColor : null,
-                  fontWeight: FontWeight.w400,
-                  fontSize: _kContentFontSize),
-            ),
-          ]),
-        ),
-      );
-    });
+
+            final label = translate(tab.label);
+            final icon = selected ? tab.selected : tab.unselected;
+            return isWeb
+                ? ListTile(
+                    title: Text(label),
+                    leading: Icon(icon),
+                    selected: selected,
+                    onTap: select,
+                  )
+                : YesDeskNavItem(
+                    icon: icon,
+                    label: label,
+                    selected: selected,
+                    compact: compact,
+                    onPressed: select,
+                  );
+          }),
+        );
+      }).toList(),
+    );
   }
 }
 
@@ -482,7 +471,8 @@ class _GeneralState extends State<_General> {
   }
 
   Widget other() {
-    final showAutoUpdate = isWindows && bind.mainIsInstalled();
+    final showAutoUpdate =
+        isWindows && bind.mainIsInstalled() && !usesYesDeskDesktopIdentity;
     final children = <Widget>[
       if (!isWeb && !bind.isIncomingOnly())
         _OptionCheckBox(context, 'Confirm before closing multiple tabs',
@@ -529,7 +519,10 @@ class _GeneralState extends State<_General> {
               isServer: false,
             ),
           ),
-        if (!isWeb && !bind.isCustomClient())
+        if (usesYesDeskDesktopIdentity)
+          _Button('YES Desk Releases',
+              () => launchUrlString(YesDeskIdentity.releases)),
+        if (!isWeb && !bind.isCustomClient() && !usesYesDeskDesktopIdentity)
           _OptionCheckBox(
             context,
             'Check for software update on startup',
@@ -1615,7 +1608,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
             );
 
       return ListTile(
-        leading: Icon(icon, color: _accentColor),
+        leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
         title: titleWidget,
         enabled: !locked,
         onTap: onTap,
@@ -2366,72 +2359,63 @@ class _AboutState extends State<_About> {
       final version = data['version'].toString();
       final buildDate = data['buildDate'].toString();
       final fingerprint = data['fingerprint'].toString();
-      const linkStyle = TextStyle(decoration: TextDecoration.underline);
-      final scrollController = ScrollController();
+      final app = bind.mainGetAppNameSync();
       return SingleChildScrollView(
-        controller: scrollController,
-        child: _Card(title: translate('About RustDesk'), children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(
-                height: 8.0,
-              ),
-              SelectionArea(
-                  child: Text('${translate('Version')}: $version')
-                      .marginSymmetric(vertical: 4.0)),
-              SelectionArea(
-                  child: Text('${translate('Build Date')}: $buildDate')
-                      .marginSymmetric(vertical: 4.0)),
-              if (!isWeb)
+        child: _Card(title: app, children: [
+          ListTile(
+            leading: loadIcon(48),
+            title: Text(app, style: Theme.of(context).textTheme.titleLarge),
+            subtitle: Text(translate('IT Workspace')),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: YesDeskSpace.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectionArea(child: Text('${translate('Version')} $version')),
                 SelectionArea(
-                    child: Text('${translate('Fingerprint')}: $fingerprint')
-                        .marginSymmetric(vertical: 4.0)),
-              InkWell(
-                  onTap: () {
-                    launchUrlString('https://rustdesk.com/privacy.html');
-                  },
-                  child: Text(
-                    translate('Privacy Statement'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
-              InkWell(
-                  onTap: () {
-                    launchUrlString('https://rustdesk.com');
-                  },
-                  child: Text(
-                    translate('Website'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
-              Container(
-                decoration: const BoxDecoration(color: Color(0xFF2c8cff)),
-                padding:
-                    const EdgeInsets.symmetric(vertical: 24, horizontal: 8),
-                child: SelectionArea(
-                    child: Row(
+                    child: Text('${translate('Build Date')} $buildDate')),
+                if (!isWeb)
+                  SelectionArea(
+                      child: Text('${translate('Fingerprint')} $fingerprint')),
+                const SizedBox(height: YesDeskSpace.md),
+                Wrap(
+                  spacing: YesDeskSpace.sm,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Copyright © ${DateTime.now().toString().substring(0, 4)} Purslane Ltd.\n$license',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          Text(
-                            translate('Slogan_tip'),
-                            style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white),
-                          )
-                        ],
+                    TextButton(
+                        onPressed: () =>
+                            launchUrlString(YesDeskIdentity.website),
+                        child: Text(translate('Website'))),
+                    TextButton(
+                        onPressed: () =>
+                            launchUrlString(YesDeskIdentity.support),
+                        child: Text(translate('Support'))),
+                    TextButton(
+                        onPressed: () =>
+                            launchUrlString(YesDeskIdentity.source),
+                        child: Text(translate('Source code'))),
+                    TextButton(
+                      onPressed: () => showLicensePage(
+                        context: context,
+                        applicationName: app,
+                        applicationVersion: version,
+                        applicationLegalese:
+                            translate('yesdesk_upstream_notice'),
                       ),
+                      child: Text(translate('Open Source Licenses')),
                     ),
                   ],
-                )),
-              ).marginSymmetric(vertical: 4.0)
-            ],
-          ).marginOnly(left: _kContentHMargin)
+                ),
+                const SizedBox(height: YesDeskSpace.md),
+                Text(translate('yesdesk_upstream_notice')),
+                if (license.isNotEmpty)
+                  ExpansionTile(
+                    title: Text(translate('Activation details')),
+                    children: [SelectionArea(child: Text(license))],
+                  ),
+              ],
+            ),
+          ),
         ]),
       );
     });
@@ -2448,31 +2432,33 @@ Widget _Card(
     required List<Widget> children,
     List<Widget>? title_suffix}) {
   return Row(
+    mainAxisAlignment: MainAxisAlignment.center,
     children: [
       Flexible(
         child: SizedBox(
           width: _kCardFixedWidth,
-          child: Card(
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                        child: Text(
-                      translate(title),
-                      textAlign: TextAlign.start,
-                      style: const TextStyle(
-                        fontSize: _kTitleFontSize,
-                      ),
-                    )),
-                    ...?title_suffix
-                  ],
-                ).marginOnly(left: _kContentHMargin, top: 10, bottom: 10),
-                ...children
-                    .map((e) => e.marginOnly(top: 4, right: _kContentHMargin)),
-              ],
-            ).marginOnly(bottom: 10),
-          ).marginOnly(left: _kCardLeftMargin, top: 15),
+          child: Builder(
+              builder: (context) => Card(
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                                child: Text(
+                              translate(title),
+                              textAlign: TextAlign.start,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            )),
+                            ...?title_suffix
+                          ],
+                        ).marginOnly(
+                            left: _kContentHMargin, top: 10, bottom: 10),
+                        ...children.map((e) =>
+                            e.marginOnly(top: 4, right: _kContentHMargin)),
+                      ],
+                    ).marginOnly(bottom: 10),
+                  )).marginOnly(
+              left: _kCardLeftMargin, right: _kCardLeftMargin, top: 15),
         ),
       ),
     ],

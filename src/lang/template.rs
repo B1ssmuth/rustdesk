@@ -1,6 +1,19 @@
 lazy_static::lazy_static! {
 pub static ref T: std::collections::HashMap<&'static str, &'static str> =
     [
+        ("Online", ""),
+        ("Offline", ""),
+        ("Support", ""),
+        ("IT Workspace", ""),
+        ("YES Desk Releases", ""),
+        ("Source code", ""),
+        ("Open Source Licenses", ""),
+        ("Activation details", ""),
+        ("yesdesk_upstream_notice", ""),
+        ("yesdesk_install_license_tip", ""),
+        ("Device table", ""),
+        ("Device tiles", ""),
+        ("Device", ""),
         ("Status", ""),
         ("Your Desktop", ""),
         ("desk_tip", ""),

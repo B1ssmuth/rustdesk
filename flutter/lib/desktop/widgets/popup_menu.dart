@@ -1,6 +1,7 @@
 import 'dart:core';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:get/get.dart';
 
 import '../../common.dart';
@@ -86,6 +87,9 @@ class MyPopupMenuItemState<T, W extends PopupMenuChildrenItem<T>>
         ));
   }
 }
+
+Color _menuAccent(BuildContext context, MenuConfig conf) =>
+    Theme.of(context).extension<YesDeskColors>()?.accent ?? conf.commonColor;
 
 class MenuConfig {
   // adapt to the screen height
@@ -247,7 +251,7 @@ class MenuEntryRadios<T> extends MenuEntryBase<T> {
                             icon: Icon(
                               Icons.check,
                               color: (opt.enabled ?? true.obs).isTrue
-                                  ? conf.commonColor
+                                  ? _menuAccent(context, conf)
                                   : Colors.grey,
                             ))
                         : const SizedBox.shrink()),
@@ -362,7 +366,7 @@ class MenuEntrySubRadios<T> extends MenuEntryBase<T> {
                                 onPressed: () {},
                                 icon: Icon(
                                   Icons.check,
-                                  color: conf.commonColor,
+                                  color: _menuAccent(context, conf),
                                 ))
                             : const SizedBox.shrink())),
                   )),
@@ -406,7 +410,7 @@ class MenuEntrySubRadios<T> extends MenuEntryBase<T> {
             alignment: Alignment.centerRight,
             child: Icon(
               Icons.keyboard_arrow_right,
-              color: conf.commonColor,
+              color: _menuAccent(context, conf),
             ),
           ))
         ]),
@@ -680,7 +684,9 @@ class MenuEntrySubMenu<T> extends MenuEntryBase<T> {
             alignment: Alignment.centerRight,
             child: Obx(() => Icon(
                   Icons.keyboard_arrow_right,
-                  color: super.enabled!.value ? conf.commonColor : Colors.grey,
+                  color: super.enabled!.value
+                      ? _menuAccent(context, conf)
+                      : Colors.grey,
                 )),
           ))
         ]),

@@ -152,12 +152,12 @@ class _PeerTabPageState extends State<PeerTabPage>
     final tabs = model.visibleEnabledOrderedIndexs;
     final tabFixed = isOptionFixed(kOptionPeerTabIndex);
     return LayoutBuilder(builder: (context, constraints) {
-      final compact = constraints.maxWidth < 550;
+      final compact = constraints.maxWidth < 690;
       return Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            width: compact ? 52 : 158,
+            width: compact ? 60 : 212,
             child: Material(
               color: colors.surface,
               child: Column(
@@ -233,7 +233,13 @@ class _PeerTabPageState extends State<PeerTabPage>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        header,
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 760),
+                            child: header,
+                          ),
+                        ),
                         const SizedBox(height: YesDeskSpace.md),
                         if (model.multiSelectionMode)
                           createMultiSelectionBar(model)
@@ -687,6 +693,38 @@ class _PeerTabPageState extends State<PeerTabPage>
         });
   }
 
+  Widget _workspaceViewButtons(BuildContext context) {
+    final locked = isOptionFixed(kOptionPeerCardUiType);
+    Future<void> setView(PeerUiType view) async {
+      peerCardUiType.value = view;
+      await bind.setLocalFlutterOption(
+        k: kOptionPeerCardUiType,
+        v: view.index.toString(),
+      );
+    }
+
+    return Obx(() {
+      final isTable = peerCardUiType.value == PeerUiType.list;
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          YesDeskIconButton(
+            label: translate('Device table'),
+            icon: Icons.table_rows_outlined,
+            selected: isTable,
+            onPressed: locked ? null : () => setView(PeerUiType.list),
+          ),
+          YesDeskIconButton(
+            label: translate('Device tiles'),
+            icon: Icons.grid_view_rounded,
+            selected: !isTable,
+            onPressed: locked ? null : () => setView(PeerUiType.grid),
+          ),
+        ],
+      );
+    });
+  }
+
   List<Widget> _landscapeRightActions(BuildContext context) {
     final model = Provider.of<PeerTabModel>(context);
     return [
@@ -699,7 +737,10 @@ class _PeerTabPageState extends State<PeerTabPage>
         offstage: model.currentTabCachedPeers.isEmpty,
         child: _createMultiSelection(),
       ),
-      _createPeerViewTypeSwitch(context),
+      if (widget.workspaceHeader != null)
+        _workspaceViewButtons(context)
+      else
+        _createPeerViewTypeSwitch(context),
       Offstage(
         offstage: model.currentTab == PeerTabIndex.recent.index,
         child: PeerSortDropdown(),
