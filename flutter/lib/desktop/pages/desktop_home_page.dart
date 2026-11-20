@@ -808,7 +808,7 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
       title: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.key, color: MyTheme.accent),
+          Icon(Icons.key, color: Theme.of(context).colorScheme.primary),
           Text(translate("Set Password")).paddingOnly(left: 10),
         ],
       ),
@@ -873,7 +873,11 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
             if (statusTip.isNotEmpty)
               Row(
                 children: [
-                  Icon(Icons.info, color: Colors.amber, size: 18)
+                  Icon(Icons.info,
+                          color: Theme.of(context)
+                              .extension<YesDeskColors>()
+                              ?.warning,
+                          size: 18)
                       .marginOnly(right: 6),
                   Expanded(
                       child: Text(
@@ -890,17 +894,7 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
                   spacing: 4,
                   children: rules.map((e) {
                     var checked = e.validate(rxPass.value.trim());
-                    return Chip(
-                        label: Text(
-                          e.name,
-                          style: TextStyle(
-                              color: checked
-                                  ? const Color(0xFF0A9471)
-                                  : Color.fromARGB(255, 198, 86, 157)),
-                        ),
-                        backgroundColor: checked
-                            ? const Color(0xFFD0F7ED)
-                            : Color.fromARGB(255, 247, 205, 232));
+                    return YesDeskValidationChip(label: e.name, valid: checked);
                   }).toList(),
                 ))
           ],
@@ -916,6 +910,7 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
         final removeButton = dialogButton(
           "Remove",
           icon: Icon(Icons.delete_outline_rounded),
+          isOutline: true,
           onPressed: () async {
             setState(() {
               errMsg0 = "";
@@ -931,8 +926,9 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
             }
             close();
           },
-          buttonStyle: ButtonStyle(
-              backgroundColor: MaterialStatePropertyAll(Colors.red)),
+          buttonStyle: OutlinedButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
         final okButton = dialogButton(
           "OK",

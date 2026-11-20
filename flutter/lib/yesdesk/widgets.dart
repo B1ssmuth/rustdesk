@@ -384,6 +384,31 @@ class _YesDeskProtectedCredentialState
   }
 }
 
+class YesDeskValidationChip extends StatelessWidget {
+  const YesDeskValidationChip({
+    super.key,
+    required this.label,
+    required this.valid,
+  });
+
+  final String label;
+  final bool valid;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = Theme.of(context).extension<YesDeskColors>() ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? YesDeskColors.dark
+            : YesDeskColors.light);
+    return Chip(
+      avatar: Icon(valid ? Icons.check : Icons.circle_outlined,
+          size: 14, color: valid ? palette.online : palette.muted),
+      label: Text(label, style: TextStyle(color: palette.text)),
+      backgroundColor: palette.raised,
+    );
+  }
+}
+
 class YesDeskDeviceStatus extends StatelessWidget {
   const YesDeskDeviceStatus({
     super.key,

@@ -281,7 +281,10 @@ class _FileManagerPageState extends State<FileManagerPage>
                                   center: Text(item.percentText),
                                   barRadius: Radius.circular(15),
                                   percent: item.percent,
-                                  progressColor: MyTheme.accent,
+                                  progressColor: Theme.of(context)
+                                      .colorScheme
+                                      .primary
+                                      .withOpacity(.24),
                                   backgroundColor: Theme.of(context).hoverColor,
                                   lineHeight: kDesktopFileTransferRowHeight,
                                 ).paddingSymmetric(vertical: 8),
@@ -301,24 +304,26 @@ class _FileManagerPageState extends State<FileManagerPage>
                                 },
                                 child: SvgPicture.asset(
                                   "assets/refresh.svg",
-                                  colorFilter: svgColor(Colors.white),
+                                  colorFilter: svgColor(
+                                      Theme.of(context).colorScheme.onSurface),
                                 ),
-                                color: MyTheme.accent,
-                                hoverColor: MyTheme.accent80,
+                                color: Theme.of(context).cardColor,
+                                hoverColor: Theme.of(context).hoverColor,
                               ),
                             ),
                             MenuButton(
                               tooltip: translate("Delete"),
                               child: SvgPicture.asset(
                                 "assets/close.svg",
-                                colorFilter: svgColor(Colors.white),
+                                colorFilter: svgColor(
+                                    Theme.of(context).colorScheme.onSurface),
                               ),
                               onPressed: () {
                                 jobController.jobTable.removeAt(index);
                                 jobController.cancelJob(item.id);
                               },
-                              color: MyTheme.accent,
-                              hoverColor: MyTheme.accent80,
+                              color: Theme.of(context).cardColor,
+                              hoverColor: Theme.of(context).hoverColor,
                             ),
                           ],
                         ).marginAll(12),
@@ -525,7 +530,7 @@ class _FileManagerViewState extends State<FileManagerView> {
                           height: 50,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.all(Radius.circular(8)),
-                            color: MyTheme.accent,
+                            color: Theme.of(context).hoverColor,
                           ),
                           padding: EdgeInsets.all(8.0),
                           child: FutureBuilder<String>(
@@ -535,7 +540,10 @@ class _FileManagerViewState extends State<FileManagerView> {
                               builder: (context, snapshot) {
                                 if (snapshot.hasData &&
                                     snapshot.data!.isNotEmpty) {
-                                  return getPlatformImage('${snapshot.data}');
+                                  return getPlatformImage('${snapshot.data}',
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface);
                                 } else {
                                   return CircularProgressIndicator(
                                     color: Theme.of(context)
@@ -764,7 +772,8 @@ class _FileManagerViewState extends State<FileManagerView> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 SvgPicture.asset("assets/folder_new.svg",
-                                    colorFilter: svgColor(MyTheme.accent)),
+                                    colorFilter: svgColor(
+                                        Theme.of(context).colorScheme.primary)),
                                 Text(
                                   translate("Create Folder"),
                                 ).paddingOnly(
@@ -900,11 +909,6 @@ class _FileManagerViewState extends State<FileManagerView> {
                           isLocal
                               ? EdgeInsets.only(left: 10)
                               : EdgeInsets.only(right: 10)),
-                      backgroundColor: MaterialStateProperty.all(
-                        selectedItems.items.isEmpty
-                            ? MyTheme.accent80
-                            : MyTheme.accent,
-                      ),
                     ),
                     onPressed: SelectedItems.valid(selectedItems.items)
                         ? () {
@@ -918,14 +922,6 @@ class _FileManagerViewState extends State<FileManagerView> {
                         ? Text(
                             translate('Send'),
                             textAlign: TextAlign.right,
-                            style: TextStyle(
-                              color: selectedItems.items.isEmpty
-                                  ? Theme.of(context).brightness ==
-                                          Brightness.light
-                                      ? MyTheme.grayBg
-                                      : MyTheme.darkGray
-                                  : Colors.white,
-                            ),
                           )
                         : isWeb
                             ? Offstage()
@@ -934,35 +930,24 @@ class _FileManagerViewState extends State<FileManagerView> {
                                 child: SvgPicture.asset(
                                   "assets/arrow.svg",
                                   colorFilter: svgColor(
-                                      selectedItems.items.isEmpty
-                                          ? Theme.of(context).brightness ==
-                                                  Brightness.light
-                                              ? MyTheme.grayBg
-                                              : MyTheme.darkGray
-                                          : Colors.white),
+                                      SelectedItems.valid(selectedItems.items)
+                                          ? Theme.of(context)
+                                              .colorScheme
+                                              .onPrimary
+                                          : Theme.of(context).hintColor),
                                   alignment: Alignment.bottomRight,
                                 ),
                               ),
                     label: isLocal
                         ? SvgPicture.asset(
                             "assets/arrow.svg",
-                            colorFilter: svgColor(selectedItems.items.isEmpty
-                                ? Theme.of(context).brightness ==
-                                        Brightness.light
-                                    ? MyTheme.grayBg
-                                    : MyTheme.darkGray
-                                : Colors.white),
+                            colorFilter: svgColor(
+                                SelectedItems.valid(selectedItems.items)
+                                    ? Theme.of(context).colorScheme.onPrimary
+                                    : Theme.of(context).hintColor),
                           )
                         : Text(
                             translate(isWeb ? 'Download' : 'Receive'),
-                            style: TextStyle(
-                              color: selectedItems.items.isEmpty
-                                  ? Theme.of(context).brightness ==
-                                          Brightness.light
-                                      ? MyTheme.grayBg
-                                      : MyTheme.darkGray
-                                  : Colors.white,
-                            ),
                           ),
                   )),
             ],

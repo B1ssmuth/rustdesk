@@ -2,6 +2,7 @@ import 'package:dash_chat_2/dash_chat_2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 
@@ -96,6 +97,7 @@ class ChatPage extends StatelessWidget implements PageShape {
             return Stack(
               children: [
                 LayoutBuilder(builder: (context, constraints) {
+                  final palette = Theme.of(context).extension<YesDeskColors>();
                   final chat = DashChat(
                     onSend: chatModel.send,
                     currentUser: chatModel.me,
@@ -126,7 +128,7 @@ class ChatPage extends StatelessWidget implements PageShape {
                       sendButtonBuilder: defaultSendButton(
                         padding:
                             EdgeInsets.symmetric(horizontal: 6, vertical: 0),
-                        color: MyTheme.accent,
+                        color: palette?.accent ?? MyTheme.accent,
                         icon: Icons.send_rounded,
                       ),
                     ),
@@ -137,17 +139,21 @@ class ChatPage extends StatelessWidget implements PageShape {
                       maxWidth: constraints.maxWidth * 0.7,
                       messageTextBuilder: (message, _, __) {
                         final isOwnMessage = message.user.id.isBlank!;
+                        final foreground = (isOwnMessage
+                                ? palette?.onAccent
+                                : palette?.text) ??
+                            Colors.white;
                         return Column(
                           crossAxisAlignment: isOwnMessage
                               ? CrossAxisAlignment.end
                               : CrossAxisAlignment.start,
                           children: <Widget>[
                             Text(message.text,
-                                style: TextStyle(color: Colors.white)),
+                                style: TextStyle(color: foreground)),
                             Text(
                               "${message.createdAt.hour}:${message.createdAt.minute.toString().padLeft(2, '0')}",
                               style: TextStyle(
-                                color: Colors.white,
+                                color: foreground,
                                 fontSize: 8,
                               ),
                             ).marginOnly(top: 3),
@@ -158,8 +164,9 @@ class ChatPage extends StatelessWidget implements PageShape {
                           (message, previousMessage, nextMessage) {
                         final isOwnMessage = message.user.id.isBlank!;
                         return defaultMessageDecoration(
-                          color:
-                              isOwnMessage ? MyTheme.accent : Colors.blueGrey,
+                          color: isOwnMessage
+                              ? palette?.accent ?? MyTheme.accent
+                              : palette?.selected ?? Colors.blueGrey,
                           borderTopLeft: 8,
                           borderTopRight: 8,
                           borderBottomRight: isOwnMessage ? 2 : 8,

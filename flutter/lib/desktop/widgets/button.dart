@@ -38,6 +38,8 @@ class _ButtonState extends State<Button> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     return Obx(() => InkWell(
           onTapDown: (_) => pressed.value = true,
           onTapUp: (_) => pressed.value = false,
@@ -53,18 +55,18 @@ class _ButtonState extends State<Button> {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: pressed.value
-                      ? MyTheme.accent
+                      ? colors.primary
                       : (widget.isOutline
                           ? Colors.transparent
-                          : MyTheme.button),
+                          : colors.primary),
                   border: Border.all(
                     color: pressed.value
-                        ? MyTheme.accent
+                        ? colors.primary
                         : hover.value
-                            ? MyTheme.hoverBorder
+                            ? colors.primary
                             : (widget.isOutline
-                                ? widget.borderColor ?? MyTheme.border
-                                : MyTheme.button),
+                                ? widget.borderColor ?? theme.dividerColor
+                                : colors.primary),
                   ),
                   borderRadius: BorderRadius.circular(widget.radius ?? 5),
                 ),
@@ -74,10 +76,9 @@ class _ButtonState extends State<Button> {
                   ),
                   style: TextStyle(
                       fontSize: widget.textSize ?? 12.0,
-                      color: widget.isOutline
-                          ? widget.textColor ??
-                              Theme.of(context).textTheme.titleLarge?.color
-                          : Colors.white),
+                      color: widget.isOutline && !pressed.value
+                          ? widget.textColor ?? colors.onSurface
+                          : colors.onPrimary),
                 ).marginSymmetric(horizontal: 12),
               )),
         ));
@@ -120,6 +121,8 @@ class _FixedWidthButtonState extends State<FixedWidthButton> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     return Obx(() => InkWell(
           onTapDown: (_) => pressed.value = true,
           onTapUp: (_) => pressed.value = false,
@@ -132,16 +135,16 @@ class _FixedWidthButtonState extends State<FixedWidthButton> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: pressed.value
-                  ? MyTheme.accent
-                  : (widget.isOutline ? Colors.transparent : MyTheme.button),
+                  ? colors.primary
+                  : (widget.isOutline ? Colors.transparent : colors.primary),
               border: Border.all(
                 color: pressed.value
-                    ? MyTheme.accent
+                    ? colors.primary
                     : hover.value
-                        ? MyTheme.hoverBorder
+                        ? colors.primary
                         : (widget.isOutline
-                            ? widget.borderColor ?? MyTheme.border
-                            : MyTheme.button),
+                            ? widget.borderColor ?? theme.dividerColor
+                            : colors.primary),
               ),
               borderRadius: BorderRadius.circular(widget.radius ?? 5),
             ),
@@ -157,10 +160,9 @@ class _FixedWidthButtonState extends State<FixedWidthButton> {
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         fontSize: widget.textSize ?? 12.0,
-                        color: widget.isOutline
-                            ? widget.textColor ??
-                                Theme.of(context).textTheme.titleLarge?.color
-                            : Colors.white),
+                        color: widget.isOutline && !pressed.value
+                            ? widget.textColor ?? colors.onSurface
+                            : colors.onPrimary),
                   ).marginSymmetric(horizontal: 12),
                 ),
               ],

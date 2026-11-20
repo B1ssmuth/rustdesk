@@ -14,6 +14,7 @@ import 'package:flutter_hbb/models/state_model.dart';
 import 'package:get/get.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter_hbb/utils/http_service.dart' as http;
+import 'package:flutter_hbb/yesdesk/widgets.dart';
 
 import '../../common.dart';
 import '../../models/model.dart';
@@ -158,17 +159,8 @@ void changeIdDialog() {
                     spacing: 4,
                     children: rules.map((e) {
                       var checked = e.validate(rxId.value);
-                      return Chip(
-                          label: Text(
-                            e.name,
-                            style: TextStyle(
-                                color: checked
-                                    ? const Color(0xFF0A9471)
-                                    : Color.fromARGB(255, 198, 86, 157)),
-                          ),
-                          backgroundColor: checked
-                              ? const Color(0xFFD0F7ED)
-                              : Color.fromARGB(255, 247, 205, 232));
+                      return YesDeskValidationChip(
+                          label: e.name, valid: checked);
                     }).toList(),
                   )).marginOnly(bottom: 8)
               : SizedBox.shrink(),
@@ -1029,7 +1021,8 @@ _connectDialog(
       title: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.password_rounded, color: MyTheme.accent),
+          Icon(Icons.password_rounded,
+              color: Theme.of(context).colorScheme.primary),
           Text(translate('Password Required')).paddingOnly(left: 10),
         ],
       ),
@@ -1391,7 +1384,8 @@ showSetOSPassword(
       title: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.password_rounded, color: MyTheme.accent),
+          Icon(Icons.password_rounded,
+              color: Theme.of(context).colorScheme.primary),
           Text(translate('OS Password')).paddingOnly(left: 10),
         ],
       ),
@@ -1482,7 +1476,8 @@ showSetOSAccount(
       title: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.password_rounded, color: MyTheme.accent),
+          Icon(Icons.password_rounded,
+              color: Theme.of(context).colorScheme.primary),
           Text(translate('OS Account')).paddingOnly(left: 10),
         ],
       ),
@@ -2096,7 +2091,8 @@ void renameDialog(
       title: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.edit_rounded, color: MyTheme.accent),
+          Icon(Icons.edit_rounded,
+              color: Theme.of(context).colorScheme.primary),
           Text(translate('Rename')).paddingOnly(left: 10),
         ],
       ),
@@ -2447,7 +2443,8 @@ void addPeersToAbDialog(
       title: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(IconFont.addressBook, color: MyTheme.accent),
+          Icon(IconFont.addressBook,
+              color: Theme.of(context).colorScheme.primary),
           Text(translate('Add to address book')).paddingOnly(left: 10),
         ],
       ),
@@ -2522,7 +2519,7 @@ void setSharedAbPasswordDialog(String abName, Peer peer) {
       title: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.key, color: MyTheme.accent),
+          Icon(Icons.key, color: Theme.of(context).colorScheme.primary),
           Text(translate(peer.password.isEmpty
                   ? 'Set shared password'
                   : 'Change Password'))
