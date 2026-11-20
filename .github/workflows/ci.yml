@@ -158,7 +158,8 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@v1
       with:
-        toolchain: stable
+        # wl-clipboard-rs 0.9.0 relies on the pre-change never-type fallback.
+        toolchain: "1.91.1"
         targets: ${{ matrix.job.target }}
         components: ''
 
