@@ -405,6 +405,18 @@ class _GeneralState extends State<_General> {
       children: [
         if (!isWeb) service(),
         theme(),
+        if (isWindows &&
+            !bind.isDisableInstallation() &&
+            !bind.mainIsInstalled() &&
+            bind.installHasBundledInstaller())
+          _Card(title: 'Installation', children: [
+            _Button('Install', () async {
+              await rustDeskWinManager.closeAllSubWindows();
+              if (!bind.mainGotoInstall()) {
+                showToast(translate('yesdesk_install_open_failed'));
+              }
+            }),
+          ]),
         _Card(title: 'Language', children: [language()]),
         if (!isWeb) hwcodec(),
         if (!isWeb) audio(context),

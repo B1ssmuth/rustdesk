@@ -1527,7 +1527,11 @@ class RustdeskImpl {
     throw UnimplementedError("installRunWithoutInstall");
   }
 
-  Future<void> installInstallMe(
+  bool installHasBundledInstaller({dynamic hint}) {
+    throw UnimplementedError("installHasBundledInstaller");
+  }
+
+  Future<String> installInstallMe(
       {required String options, required String path, dynamic hint}) {
     throw UnimplementedError("installInstallMe");
   }

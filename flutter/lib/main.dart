@@ -399,6 +399,7 @@ void _runApp(
 
 void runInstallPage() async {
   await windowManager.ensureInitialized();
+  await windowManager.setPreventClose(true);
   await initEnv(kAppTypeMain);
   _runApp(
     bind.mainGetAppNameSync(),
