@@ -2,6 +2,7 @@
 
 import os
 import optparse
+import subprocess
 from hashlib import md5
 import brotli
 import datetime
@@ -66,13 +67,14 @@ def write_app_metadata(output_folder: str):
 
 def build_portable(output_folder: str, target: str):
     os.chdir(output_folder)
+    command = ["cargo", "build", "--release"]
     if target:
-        os.system("cargo build --release --target " + target)
-    else:
-        os.system("cargo build --release")
+        command.extend(["--target", target])
+    subprocess.run(command, check=True)
 
-# Linux: python3 generate.py -f ../rustdesk-portable-packer/test -o . -e ./test/main.py
-# Windows: python3 .\generate.py -f ..\rustdesk\flutter\build\windows\runner\Debug\ -o . -e ..\rustdesk\flutter\build\windows\runner\Debug\rustdesk.exe
+
+# Linux: python3 generate.py -f ../rustdesk-portable-packer/test -o . -e main.py
+# Windows: python3 .\generate.py -f ..\rustdesk\flutter\build\windows\runner\Debug\ -o . -e YES_Desk.exe
 
 
 if __name__ == '__main__':
@@ -82,7 +84,7 @@ if __name__ == '__main__':
     parser.add_option("-o", "--output", dest="output_folder",
                       help="the root of portable packer project, default is './'")
     parser.add_option("-e", "--executable", dest="executable",
-                      help="specify startup file in --folder, default is rustdesk.exe")
+                      help="specify startup file in --folder, default is YES_Desk.exe")
     parser.add_option("-t", "--target", dest="target",
                       help="the target used by cargo")
     parser.add_option("-l", "--level", dest="level", type="int",
@@ -92,14 +94,12 @@ if __name__ == '__main__':
     output_folder = os.path.abspath(options.output_folder or './')
 
     if not options.executable:
-        options.executable = 'rustdesk.exe'
-    if not options.executable.startswith(folder):
-        options.executable = folder + '/' + options.executable
-    exe: str = os.path.abspath(options.executable)
-    if not exe.startswith(os.path.abspath(folder)):
-        print("The executable must locate in source folder")
-        exit(-1)
-    exe = '.' + exe[len(os.path.abspath(folder)):]
+        options.executable = 'YES_Desk.exe'
+    folder = os.path.abspath(folder)
+    exe = os.path.abspath(os.path.join(folder, options.executable))
+    if os.path.commonpath([exe, folder]) != folder or not os.path.isfile(exe):
+        parser.error("The executable must be an existing file inside the source folder")
+    exe = os.path.join(".", os.path.relpath(exe, folder))
     print("Executable path: " + exe)
     print("Compression level: " + str(options.level))
     md5_table = generate_md5_table(folder, options.level)

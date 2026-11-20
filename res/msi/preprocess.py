@@ -79,6 +79,7 @@ def make_parser():
     parser.add_argument(
         "--display-name", help="Product and shortcut labels. Does not change installer identity."
     )
+    parser.add_argument("--yesdesk", action="store_true", help="Build the dedicated YES Desk MSI.")
     parser.add_argument("--product-url", help="Public corresponding source URL.")
     parser.add_argument("--support-url", help="Public support URL.")
     parser.add_argument(
@@ -117,16 +118,19 @@ def read_lines_and_start_index(file_path, tag_start, tag_end):
     return lines, index_start
 
 
-def insert_components_between_tags(lines, index_start, app_name, dist_dir):
+def insert_components_between_tags(lines, index_start, executable, dist_dir, namespace):
     indent = g_indent_unit * 3
     path = Path(dist_dir)
-    idx = 1
-    for file_path in path.glob("**/*"):
+    for file_path in sorted(path.glob("**/*")):
         if file_path.is_file():
-            if file_path.name.lower() == f"{app_name}.exe".lower():
+            if file_path == path / executable:
                 continue
 
-            subdir = str(file_path.parent.relative_to(path))
+            relative = file_path.relative_to(path)
+            component_guid = (
+                uuid.uuid5(namespace, relative.as_posix().lower()) if namespace else uuid.uuid4()
+            )
+            subdir = str(relative.parent)
             dir_attr = ""
             if subdir != ".":
                 dir_attr = f'Subdirectory="{subdir}"'
@@ -135,36 +139,34 @@ def insert_components_between_tags(lines, index_start, app_name, dist_dir):
             # because it will cause error
             # "Error WIX0130	The primary key 'xxxx' is duplicated in table 'Directory'"
             to_insert_lines = f"""
-{indent}<Component Guid="{uuid.uuid4()}" {dir_attr}>
+{indent}<Component Guid="{component_guid}" {dir_attr}>
 {indent}{g_indent_unit}<File Source="{file_path.as_posix()}" KeyPath="yes" Checksum="yes" />
 {indent}</Component>
 """
             lines.insert(index_start + 1, to_insert_lines[1:])
             index_start += 1
-            idx += 1
     return True
 
 
-def gen_auto_component(app_name, dist_dir):
+def gen_auto_component(executable, dist_dir, namespace):
     return gen_content_between_tags(
         "Package/Components/RustDesk.wxs",
         "<!--$AutoComonentStart$-->",
         "<!--$AutoComponentEnd$-->",
         lambda lines, index_start: insert_components_between_tags(
-            lines, index_start, app_name, dist_dir
+            lines, index_start, executable, dist_dir, namespace
         ),
     )
 
 
-def gen_pre_vars(args, dist_dir):
+def gen_pre_vars(args, dist_dir, executable, upgrade_code):
     def func(lines, index_start):
-        upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, args.app_name + ".exe")
-
         indent = g_indent_unit * 1
         to_insert_lines = [
             f'{indent}<?define Version="{g_version}" ?>\n',
             f'{indent}<?define Manufacturer="{args.manufacturer}" ?>\n',
             f'{indent}<?define Product="{args.app_name}" ?>\n',
+            f'{indent}<?define Executable="{executable}" ?>\n',
             f'{indent}<?define DisplayName="{args.display_name or args.app_name}" ?>\n',
             f'{indent}<?define Description="{args.display_name or args.app_name} Installer" ?>\n',
             f'{indent}<?define ProductLower="{args.app_name.lower()}" ?>\n',
@@ -177,6 +179,8 @@ def gen_pre_vars(args, dist_dir):
             f'{indent}<?define UpgradeCode = "{upgrade_code}" ?>\n',
         ]
 
+        if args.yesdesk:
+            to_insert_lines.append(f'{indent}<?define YesDesk="1" ?>\n')
         for i, line in enumerate(to_insert_lines):
             lines.insert(index_start + i + 1, line)
         return lines
@@ -319,7 +323,7 @@ def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
             f'{indent}<RegistryValue Type="string" Name="DisplayName" Value="{args.display_name or args.app_name}" />\n'
         )
         lines_new.append(
-            f'{indent}<RegistryValue Type="string" Name="DisplayIcon" Value="[INSTALLFOLDER_INNER]{args.app_name}.exe" />\n'
+            f'{indent}<RegistryValue Type="string" Name="DisplayIcon" Value="[#App.exe]" />\n'
         )
         lines_new.append(
             f'{indent}<RegistryValue Type="string" Name="DisplayVersion" Value="{g_version}" />\n'
@@ -379,6 +383,10 @@ def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
         lines_new.append(
             f'{indent}<RegistryValue Type="integer" Name="WindowsInstaller" Value="1" />\n'
         )
+        if args.yesdesk:
+            lines_new.append(
+                f'{indent}<RegistryValue Type="string" Name="ExecutableName" Value="$(var.Executable)" />\n'
+            )
         for k, v in g_arpsystemcomponent.items():
             if "v" in v:
                 t = v["t"] if "t" in v is None else "string"
@@ -464,18 +472,14 @@ def prepare_resources():
         return False
 
 
-def init_global_vars(dist_dir, app_name, args):
-    dist_app = dist_dir.joinpath(app_name + ".exe")
+def init_global_vars(dist_dir, executable, args):
+    dist_app = dist_dir / executable
 
-    def read_process_output(args):
-        process = subprocess.Popen(
-            f"{dist_app} {args}",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            shell=True,
-        )
-        output, _ = process.communicate()
-        return output.decode("utf-8").strip()
+    def read_process_output(flag):
+        return subprocess.run(
+            [str(dist_app), flag], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=True, text=True, encoding="utf-8"
+        ).stdout.strip()
 
     global g_version
     global g_build_date
@@ -514,7 +518,7 @@ def update_license_file(app_name):
         f.write(license_content)
 
 
-def replace_component_guids_in_wxs():
+def replace_component_guids_in_wxs(namespace=None):
     langs_dir = Path(sys.argv[0]).parent.joinpath("Package")
     for file_path in langs_dir.glob("**/*.wxs"):
         with open(file_path, "r", encoding="utf-8") as f:
@@ -524,7 +528,8 @@ def replace_component_guids_in_wxs():
         for i, line in enumerate(lines):
             match = re.search(r'Component.+Guid="([^"]+)"', line)
             if match:
-                lines[i] = re.sub(r'Guid="[^"]+"', f'Guid="{uuid.uuid4()}"', line)
+                guid = uuid.uuid5(namespace, match[1].lower()) if namespace else uuid.uuid4()
+                lines[i] = re.sub(r'Guid="[^"]+"', f'Guid="{guid}"', line)
 
         with open(file_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
@@ -534,24 +539,43 @@ if __name__ == "__main__":
     parser = make_parser()
     args = parser.parse_args()
 
+    if args.yesdesk:
+        args.app_name = "YES Desk"
+        args.manufacturer = "YES Apart"
+        args.arp = True
     app_name = args.app_name
+    executable = "YES_Desk.exe" if args.yesdesk else f"{app_name}.exe"
+    upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, executable)
+    namespace = upgrade_code if args.yesdesk else None
     dist_dir = Path(sys.argv[0]).parent.joinpath(args.dist_dir).resolve()
+
+    if args.yesdesk:
+        if not (dist_dir / executable).is_file():
+            parser.error(f"Missing {executable} in the MSI staging directory")
+        if any(
+            file.is_file() and (
+                file.name.lower() in {"rustdesk.exe", "yes desk.exe"} or file.suffix.lower() == ".msi"
+            )
+            for file in dist_dir.rglob("*")
+        ):
+            parser.error("The MSI payload contains a legacy runner or another MSI")
 
     if not prepare_resources():
         sys.exit(-1)
 
-    if not init_global_vars(dist_dir, app_name, args):
+    if not init_global_vars(dist_dir, executable, args):
         sys.exit(-1)
 
-    update_license_file(app_name)
+    if not args.yesdesk:
+        update_license_file(app_name)
 
-    if not gen_pre_vars(args, dist_dir):
+    if not gen_pre_vars(args, dist_dir, executable, upgrade_code):
         sys.exit(-1)
 
     if app_name != "RustDesk":
-        replace_component_guids_in_wxs()
+        replace_component_guids_in_wxs(namespace)
 
-    if not gen_upgrade_info():
+    if not args.yesdesk and not gen_upgrade_info():
         sys.exit(-1)
 
     if not gen_custom_ARPSYSTEMCOMPONENT(args, dist_dir):
@@ -560,12 +584,12 @@ if __name__ == "__main__":
     if not gen_conn_type(args):
         sys.exit(-1)
 
-    if not gen_auto_component(app_name, dist_dir):
+    if not gen_auto_component(executable, dist_dir, namespace):
         sys.exit(-1)
 
     if not gen_custom_dialog_bitmaps():
         sys.exit(-1)
 
     apply_display_name(args.display_name or args.app_name)
-    if args.app_name != "RustDesk":
+    if not args.yesdesk and args.app_name != "RustDesk":
         replace_app_name_in_custom_actions(args.app_name)

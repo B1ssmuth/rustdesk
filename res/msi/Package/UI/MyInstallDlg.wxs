@@ -23,6 +23,7 @@ Patch dialog sequence:
 -->
 
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+    <?include ../Includes.wxi?>
     <?foreach WIXUIARCH in X86;X64;A64 ?>
     <Fragment>
         <UI Id="UI_MyInstallDialog_$(WIXUIARCH)">
@@ -67,8 +68,10 @@ Patch dialog sequence:
             <Publish Dialog="MyInstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
             <Publish Dialog="MyInstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
             <Publish Dialog="MyInstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+            <?ifndef YesDesk?>
             <Publish Dialog="MyInstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
             <Publish Dialog="MyInstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+            <?endif?>
             <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MyInstallDirDlg" Order="1" Condition="NOT Installed" />
             <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
             <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />

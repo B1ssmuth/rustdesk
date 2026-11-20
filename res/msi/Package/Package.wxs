@@ -21,6 +21,7 @@
 		<ui:WixUI Id="UI_MyInstallDialog" InstallDirectory="INSTALLFOLDER_INNER" />
 		<UIRef Id="WixUI_ErrorProgressText" />
 
+		<?ifndef YesDesk?>
 		<InstallUISequence>
 			<Show Dialog="UI_AnotherAppDialog" Before="WelcomeDlg" Condition="Not installed AND APP_WINDOWS_INSTALLER=&quot;#0&quot;"/>
 		</InstallUISequence>
@@ -34,6 +35,43 @@
 			<InstallValidate Condition="NOT Installed" />
 
 		</InstallExecuteSequence>
+		<?endif?>
+
+		<?ifdef YesDesk?>
+		<Property Id="YESDESK_LAUNCH_APP" Value="1" Secure="yes" />
+		<Property Id="YESDESK_DEFER_SERVICE_START" Secure="yes" />
+		<Property Id="YESDESK_SKIP_SERVICE" Secure="yes" />
+		<Property Id="YESDESK_INSTALLED_EXE">
+			<RegistrySearch Id="YesDeskExecutable" Root="HKLM" Bitness="always64"
+				Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\YES Desk" Name="ExecutableName" Type="raw" />
+		</Property>
+		<Property Id="YESDESK_LEGACY_NATIVE">
+			<RegistrySearch Id="YesDeskLegacyNative" Root="HKLM" Bitness="always64"
+				Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\YES Desk" Name="InstallLocation" Type="raw" />
+		</Property>
+		<Property Id="YESDESK_LEGACY_NATIVE_X86">
+			<RegistrySearch Id="YesDeskLegacyNativeX86" Root="HKLM" Bitness="always32"
+				Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\YES Desk" Name="InstallLocation" Type="raw" />
+		</Property>
+		<Property Id="YESDESK_LEGACY_MSI_NAME">
+			<RegistrySearch Id="YesDeskLegacyMsiName" Root="HKLM" Bitness="always64"
+				Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" Name="DisplayName" Type="raw" />
+		</Property>
+		<Property Id="YESDESK_LEGACY_MSI_PUBLISHER">
+			<RegistrySearch Id="YesDeskLegacyMsiPublisher" Root="HKLM" Bitness="always64"
+				Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" Name="Publisher" Type="raw" />
+		</Property>
+		<Property Id="YESDESK_EXISTING_SERVICE">
+			<RegistrySearch Id="YesDeskServiceImage" Root="HKLM" Bitness="always64"
+				Key="SYSTEM\CurrentControlSet\Services\YES Desk" Name="ImagePath" Type="raw" />
+		</Property>
+		<Upgrade Id="D3DC41E3-3C37-5D52-BB47-F6673705C01B">
+			<UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" OnlyDetect="yes" Property="YESDESK_LEGACY_FAMILY" />
+		</Upgrade>
+		<Launch Condition='Installed OR (NOT YESDESK_LEGACY_NATIVE_X86 AND (YESDESK_INSTALLED_EXE ~= "YES_Desk.exe" OR (NOT YESDESK_LEGACY_NATIVE AND NOT YESDESK_EXISTING_SERVICE)) AND NOT YESDESK_LEGACY_MSI_NAME ~&gt;&lt; "YES Desk" AND NOT YESDESK_LEGACY_MSI_PUBLISHER ~= "YES Apart" AND (NOT YESDESK_LEGACY_FAMILY OR YESDESK_LEGACY_MSI_NAME ~= "RustDesk"))'
+			Message="An earlier or unidentified remote-support installation was found. Back up its settings and verify which product it belongs to before migrating to YES Desk. See YESDESK-WINDOWS-INSTALLATION.md." />
+		<Property Id="ARPSYSTEMCOMPONENT" Value="1" />
+		<?endif?>
 
 		<MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" />
 
