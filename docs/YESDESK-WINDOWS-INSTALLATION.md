@@ -6,7 +6,7 @@
 | --- | --- |
 | Versioned portable EXE | Runs from a per-user cache under `%LOCALAPPDATA%\YES Desk Portable`. The home screen has no installation or update card. |
 | Portable **Settings → General → Installation** | Opens the Flutter installer if that build includes its matching MSI and no YES Desk installation is registered. Run portable normally. Windows Installer handles any UAC prompt. |
-| MSI | Installs one primary application binary, `%ProgramFiles%\YES Desk\YES_Desk.exe`, by default. Removes the app through Windows Installer from **Settings → Apps → Installed apps**. |
+| MSI | Installs one primary application binary, `%ProgramFiles%\YES Desk\YES_Desk.exe`, in the standard system directory. Removes the app through Windows Installer from **Settings → Apps → Installed apps**. |
 | Installed application | Opens via the **YES Desk** Start Menu shortcut or the registered executable. A stale registry path with no executable does not count as installed. |
 
 The x64 build compiles `YES_Desk.exe` directly. WiX consumes the runner and its libraries before the completed MSI is embedded in the portable EXE. Installed files never include the embedded MSI. The archiving code keeps the serialized portable format marker and native interface for compatibility. The x86 Sciter build does not use this MSI.
@@ -49,7 +49,7 @@ Windows Installer rolls back the new product's files, standard registry entries 
 
 ## Verification
 
-The Windows x64 Actions smoke test reads MSI and PE metadata, verifies that an older YES Desk registration blocks installation, installs silently from a path with spaces and checks the installed EXE, product registration and service image path. It removes the product and checks for leftovers. The runner neither launches the app nor starts the service, so the smoke test does not contact the configured infrastructure.
+The Windows x64 Actions smoke test checks portable extraction and compares the embedded MSI with the standalone artifact. It reads MSI and PE metadata, verifies that an older YES Desk registration blocks installation, installs silently from a path with spaces and checks the installed EXE, product registration and service image path. It checks the real installed state through `YES_Desk.exe --install-state` before and after installation. It removes the product and checks for leftovers. The runner neither launches the app nor starts the service, so the smoke test does not contact the configured infrastructure.
 
 Interactive UAC, automatic launch after portable setup, service start after reboot, real legacy profile migration and rollback, the Windows UI under hardware scaling, and actual remote connections, clipboard and file transfer require separate Windows acceptance tests with test endpoints.
 

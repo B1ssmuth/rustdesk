@@ -70,7 +70,8 @@
 		</Upgrade>
 		<Launch Condition='Installed OR (NOT YESDESK_LEGACY_NATIVE_X86 AND NOT YESDESK_LEGACY_NATIVE AND (YESDESK_INSTALLED_EXE ~= "YES_Desk.exe" OR NOT YESDESK_EXISTING_SERVICE) AND NOT YESDESK_LEGACY_MSI_NAME ~&gt;&lt; "YES Desk" AND NOT YESDESK_LEGACY_MSI_PUBLISHER ~= "YES Apart" AND (NOT YESDESK_LEGACY_FAMILY OR YESDESK_LEGACY_MSI_NAME ~= "RustDesk"))'
 			Message="An earlier or unidentified remote-support installation was found. Back up its settings and verify which product it belongs to before migrating to YES Desk. See YESDESK-WINDOWS-INSTALLATION.md." />
-		<SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER_INNER]" After="CostFinalize" Sequence="execute" />
+		<SetDirectory Id="INSTALLFOLDER_INNER" Action="SetYesDeskInstallDirectory" Value="[ProgramFiles64Folder]YES Desk\" />
+		<SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER_INNER]" After="SetYesDeskInstallDirectory" Sequence="execute" />
 		<?endif?>
 
 		<MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" />

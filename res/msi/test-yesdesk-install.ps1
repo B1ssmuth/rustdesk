@@ -20,15 +20,22 @@ function Invoke-YesDeskMsi([string] $Arguments) {
 $msiFile = (Resolve-Path -LiteralPath $Msi).Path
 $portable = (Get-Item -LiteralPath $PortableExe).VersionInfo
 $installer = New-Object -ComObject WindowsInstaller.Installer
-$database = $installer.OpenDatabase($msiFile, 0)
+$database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msiFile, 0))
 
 function Get-YesDeskMsiProperty([string] $Name) {
-    $view = $database.OpenView("SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$Name'")
+    $query = "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$Name'"
+    $view = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, @($query))
     try {
-        $view.Execute()
-        return $view.Fetch().StringData(1)
+        [void] $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+        $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+        try {
+            return $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, @(1))
+        } finally {
+            [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($record)
+        }
     } finally {
-        $view.Close()
+        [void] $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
+        [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
     }
 }
 
@@ -55,6 +62,22 @@ $temp = Join-Path $env:RUNNER_TEMP 'YES Desk MSI smoke'
 New-Item -ItemType Directory $temp | Out-Null
 $package = Join-Path $temp 'YES Desk.msi'
 Copy-Item -LiteralPath $msiFile -Destination $package
+function Assert-InstallState([string] $Exe, [string] $Expected) {
+    $stdout = Join-Path $temp 'install-state.txt'
+    $process = Start-Process -FilePath $Exe -ArgumentList '--install-state' -Wait -PassThru -RedirectStandardOutput $stdout
+    Assert-YesDesk ($process.ExitCode -eq 0 -and
+        (Select-String -LiteralPath $stdout -SimpleMatch $Expected -Quiet)) "Unexpected installation state for $Exe."
+}
+
+$portableCache = Join-Path $env:LOCALAPPDATA 'YES Desk Portable'
+$portableRunner = Join-Path $portableCache 'YES_Desk.exe'
+$embeddedMsi = Join-Path $portableCache 'YES_Desk.msi'
+Assert-InstallState ((Resolve-Path -LiteralPath $PortableExe).Path) 'installed=false current_exe_installed=false'
+Assert-YesDesk (Test-Path -LiteralPath $portableRunner) 'The portable launcher did not extract the branded runner.'
+Assert-YesDesk ((Get-ChildItem -LiteralPath $portableCache -File -Filter '*.exe' |
+    Where-Object Name -ne 'RuntimeBroker_rustdesk.exe').Count -eq 1) 'The portable payload contains duplicate runners.'
+Assert-YesDesk ((Get-FileHash -LiteralPath $embeddedMsi).Hash -eq (Get-FileHash -LiteralPath $package).Hash) 'The embedded MSI differs from the standalone artifact.'
+
 $installArgs = "/i `"$package`" /qn /norestart YESDESK_LAUNCH_APP=0 YESDESK_DEFER_SERVICE_START=1 INSTALLPRINTER=0"
 
 # Simulate a registered legacy native installation without providing any app files or settings.
@@ -85,6 +108,8 @@ try {
     Assert-YesDesk ($arp.DisplayName -eq 'YES Desk' -and $arp.Publisher -eq 'YES Apart') 'The Installed apps entry is incorrect.'
     Assert-YesDesk ($arp.SystemComponent -ne 1 -and !(Test-Path $legacyKey)) 'The MSI should publish only the standard ARP entry.'
 
+    Assert-InstallState $runner 'installed=true current_exe_installed=true'
+    Assert-InstallState $portableRunner 'installed=true current_exe_installed=false'
     $exe = (Get-Item -LiteralPath $runner).VersionInfo
     Assert-YesDesk ($exe.OriginalFilename -eq 'YES_Desk.exe' -and
         $exe.ProductName -eq 'YES Desk' -and $exe.CompanyName -eq 'YES Apart') 'The installed EXE metadata is incorrect.'
@@ -103,4 +128,5 @@ try {
 
 Assert-YesDesk (!(Test-Path $runner) -and !(Test-Path $installerKey) -and !(Test-Path $arpKey)) 'Uninstall left the executable or registration.'
 Assert-YesDesk (!(Get-Service $serviceName -ErrorAction SilentlyContinue)) 'Uninstall left the YES Desk service.'
-Write-Host 'MSI metadata, legacy guard, clean installation, SCM registration and uninstall passed.'
+Assert-InstallState $portableRunner 'installed=false current_exe_installed=false'
+Write-Host 'Portable payload, installed state, MSI metadata, legacy guard, SCM registration and uninstall passed.'
