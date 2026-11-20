@@ -58,8 +58,9 @@ class _Session {
       ),
       onPhase: (phase) {
         phases.add(phase);
-        if (phase == SshPhase.closed || phase == SshPhase.failed)
+        if (phase == SshPhase.closed || phase == SshPhase.failed) {
           ended.complete();
+        }
       },
       onText: output.write,
       size: () => size,
@@ -189,8 +190,8 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 140));
       // Split a multibyte scalar across separate writes from the real shell.
       first.run.write(
-          r'''printf '\320'; sleep .15; printf '\226-PTY\n'; stty size; printf '\nTERM=%s\n' "$TERM"''' +
-              '\n');
+          r'''printf '\320'; sleep .15; printf '\226-PTY\n'; stty size; printf '\nTERM=%s\n' "$TERM"'''
+          '\n');
       second.run.write("printf '\\nsecond-%s\\n' 'session'\n");
       await first.waitFor('Ж-PTY');
       await first.waitFor('37 101');

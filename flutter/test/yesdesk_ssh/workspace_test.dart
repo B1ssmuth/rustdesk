@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/yesdesk/ssh/controllers/ssh_tab.dart';
@@ -40,38 +38,38 @@ Widget _workspace(
       ),
     );
 
-Future<void> _load(
-    WidgetTester tester, SshRepository repository, Widget workspace) async {
-  await tester.runAsync(() async {
-    await tester.pumpWidget(workspace);
-    await repository.load();
-  });
-  await tester.pumpAndSettle();
+class _WidgetRepository extends SshRepository {
+  final profiles = <String, SshProfile>{};
+
+  @override
+  Future<({List<SshProfile> profiles, List<String> groups})> load() async =>
+      (profiles: profiles.values.toList(), groups: []);
+
+  @override
+  Future<String?> save(SshProfile profile, {bool clearSecret = false}) async {
+    profiles[profile.id] = profile;
+    return null;
+  }
 }
 
 void main() {
-  late Directory directory;
-  late SshRepository repository;
-  setUp(() async {
-    directory = await Directory.systemTemp.createTemp('yesdesk-ssh-widget-');
-    repository = SshRepository(() async => directory);
-  });
-  tearDown(() async => directory.delete(recursive: true));
+  late _WidgetRepository repository;
+  setUp(() => repository = _WidgetRepository());
 
   testWidgets('English light and Russian dark catalogs use the YES Desk theme',
       (tester) async {
-    await tester.runAsync(() => repository.save(SshProfile(
-          id: 'theme',
-          name: 'Lab server',
-          host: 'localhost',
-          username: 'test',
-        )));
+    await repository.save(SshProfile(
+      id: 'theme',
+      name: 'Lab server',
+      host: 'localhost',
+      username: 'test',
+    ));
     for (final (locale, brightness, title, search) in [
       ('en', Brightness.light, 'SSH Terminal', 'Search servers'),
       ('ru_RU', Brightness.dark, 'SSH-терминал', 'Поиск серверов'),
     ]) {
-      await _load(
-          tester, repository, _workspace(repository, locale, brightness));
+      await tester.pumpWidget(_workspace(repository, locale, brightness));
+      await tester.pumpAndSettle();
       expect(find.text(title), findsOneWidget);
       expect(find.text(search), findsOneWidget);
       expect(find.text('Lab server'), findsOneWidget);
@@ -85,22 +83,16 @@ void main() {
     }
   });
 
-  testWidgets('create and edit a persisted profile from catalog actions',
-      (tester) async {
-    await _load(
-        tester, repository, _workspace(repository, 'en', Brightness.light));
+  testWidgets('create and edit a profile from catalog actions', (tester) async {
+    await tester.pumpWidget(_workspace(repository, 'en', Brightness.light));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('New connection'));
     await tester.pumpAndSettle();
     final fields = find.byType(TextFormField);
     await tester.enterText(fields.at(0), 'Lab host');
     await tester.enterText(fields.at(1), '127.0.0.1');
     await tester.enterText(fields.at(3), 'test-user');
-    await tester.runAsync(() async {
-      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pump();
-      await repository.load();
-      await repository.load();
-    });
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
     expect(find.text('Lab host'), findsOneWidget);
     await tester.tap(find.byTooltip('Connection actions'));
@@ -108,15 +100,9 @@ void main() {
     await tester.tap(find.text('Edit'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextFormField).first, 'Edited lab');
-    await tester.runAsync(() async {
-      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pump();
-      await repository.load();
-      await repository.load();
-    });
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
-    final saved = await tester.runAsync(repository.load);
-    expect(saved!.profiles.single.name, 'Edited lab');
+    expect(repository.profiles.values.single.name, 'Edited lab');
     expect(find.text('Edited lab'), findsOneWidget);
   });
 
@@ -139,8 +125,9 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData')
+      if (call.method == 'Clipboard.setData') {
         clipboardWrites.add(call.arguments);
+      }
       if (call.method == 'Clipboard.getData') return {'text': 'alpha\nbeta'};
       return null;
     });
