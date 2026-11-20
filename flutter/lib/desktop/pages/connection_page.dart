@@ -82,7 +82,7 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
       final (label, color) = stopped
           ? ('Service is not running', colors.warning)
           : switch (status) {
-              SvcStatus.ready => ('Ready', colors.accent),
+              SvcStatus.ready => ('Ready', colors.online),
               SvcStatus.connecting => (
                   'yesdesk_connecting_status',
                   colors.warning
