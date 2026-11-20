@@ -137,6 +137,16 @@ pub fn core_main() -> Option<Vec<String>> {
         }
     }
     #[cfg(windows)]
+    if args.first().is_some_and(|arg| arg == "--install-state") {
+        use crate::platform::windows;
+        println!(
+            "installed={} current_exe_installed={}",
+            windows::is_installed(),
+            windows::is_cur_exe_the_installed()
+        );
+        return None;
+    }
+    #[cfg(windows)]
     {
         _is_quick_support |= !crate::platform::is_installed()
             && args.is_empty()
@@ -203,6 +213,10 @@ pub fn core_main() -> Option<Vec<String>> {
                 return None;
             } else if args[0] == "--update" {
                 if config::is_disable_installation() {
+                    return None;
+                }
+                if platform::windows::uses_yesdesk_msi() {
+                    log::info!("Update YES Desk using a YES Desk MSI package");
                     return None;
                 }
 

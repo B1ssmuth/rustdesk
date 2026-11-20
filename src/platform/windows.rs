@@ -1182,6 +1182,22 @@ pub fn lock_screen() {
 
 const IS1: &str = "{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1";
 
+const YESDESK_EXE: &str = "YES_Desk.exe";
+const YESDESK_MSI: &str = "YES_Desk.msi";
+const YESDESK_INSTALL_KEY: &str = r"HKEY_LOCAL_MACHINE\Software\YES Apart\YES Desk\Installer";
+
+pub fn uses_yesdesk_msi() -> bool {
+    cfg!(all(feature = "flutter", target_arch = "x86_64")) && crate::get_app_name() == "YES Desk"
+}
+
+pub fn has_bundled_installer() -> bool {
+    !uses_yesdesk_msi() || bundled_msi().is_ok_and(|path| path.is_file())
+}
+
+fn bundled_msi() -> std::io::Result<PathBuf> {
+    Ok(std::env::current_exe()?.with_file_name(YESDESK_MSI))
+}
+
 fn get_subkey(name: &str, wow: bool) -> String {
     let tmp = format!(
         "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{}",
@@ -1195,6 +1211,26 @@ fn get_subkey(name: &str, wow: bool) -> String {
 }
 
 fn get_valid_subkey() -> String {
+    if uses_yesdesk_msi() {
+        if get_reg_of(YESDESK_INSTALL_KEY, "ExecutableName").eq_ignore_ascii_case(YESDESK_EXE) {
+            return YESDESK_INSTALL_KEY.to_owned();
+        }
+        let current = get_subkey("YES Desk", false);
+        let legacy_msi = get_subkey("RustDesk", false);
+        if !get_reg_of(&current, "InstallLocation").is_empty() {
+            return current;
+        }
+        let native_x86 = get_subkey("YES Desk", true);
+        if !get_reg_of(&native_x86, "InstallLocation").is_empty() {
+            return native_x86;
+        }
+        if get_reg_of(&legacy_msi, "DisplayName").eq_ignore_ascii_case("YES Desk")
+            && get_reg_of(&legacy_msi, "Publisher").eq_ignore_ascii_case("YES Apart")
+        {
+            return legacy_msi;
+        }
+        return current;
+    }
     let subkey = get_subkey(IS1, false);
     if !get_reg_of(&subkey, "InstallLocation").is_empty() {
         return subkey;
@@ -1321,7 +1357,25 @@ fn get_install_info_with_subkey(subkey: String) -> (String, String, String, Stri
         "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\{}",
         crate::get_app_name()
     );
-    let exe = format!("{}\\{}.exe", path, crate::get_app_name());
+    let exe = if uses_yesdesk_msi() {
+        let directory = Path::new(&path);
+        let names = if get_reg_of(&subkey, "ExecutableName").eq_ignore_ascii_case(YESDESK_EXE) {
+            &[YESDESK_EXE][..]
+        } else if subkey.ends_with("\\RustDesk") {
+            &["RustDesk.exe", YESDESK_EXE][..]
+        } else {
+            &[YESDESK_EXE, "YES Desk.exe"][..]
+        };
+        names
+            .iter()
+            .map(|name| directory.join(name))
+            .find(|candidate| candidate.is_file())
+            .unwrap_or_else(|| directory.join(YESDESK_EXE))
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        format!("{}\\{}.exe", path, crate::get_app_name())
+    };
     (subkey, path, start_menu, exe)
 }
 
@@ -1443,7 +1497,96 @@ fn get_after_install(
     ", create_service=get_create_service(&exe))
 }
 
+fn windows_installer() -> ResultType<std::process::Command> {
+    let mut system_directory = [0u16; MAX_PATH];
+    let size = unsafe {
+        winapi::um::sysinfoapi::GetSystemDirectoryW(
+            system_directory.as_mut_ptr(),
+            system_directory.len() as UINT,
+        )
+    } as usize;
+    if size == 0 || size >= system_directory.len() {
+        bail!("Cannot find the Windows system directory");
+    }
+    let system_directory = PathBuf::from(OsString::from_wide(&system_directory[..size]));
+    Ok(std::process::Command::new(
+        system_directory.join("msiexec.exe"),
+    ))
+}
+
+fn install_yesdesk(options: &str, silent: bool) -> ResultType<()> {
+    // Windows Installer handles elevation. The interactive caller starts the installed
+    // app only when it can do so with its ordinary user token.
+    if !silent && is_elevated(None)? {
+        bail!(crate::lang::translate(
+            "yesdesk_install_non_elevated".into()
+        ));
+    }
+    let msi = bundled_msi()?;
+    if !msi.is_file() {
+        bail!(crate::lang::translate(
+            "yesdesk_install_package_missing".into()
+        ));
+    }
+
+    let mut command = windows_installer()?;
+    command
+        .arg("/i")
+        .arg(msi)
+        .arg(if silent { "/qn" } else { "/passive" })
+        .args(["/norestart", "YESDESK_LAUNCH_APP=0"]);
+    let options: Vec<_> = options.split_whitespace().collect();
+    for (option, property) in [
+        ("startmenu", "CREATESTARTMENUSHORTCUTS"),
+        ("desktopicon", "CREATEDESKTOPSHORTCUTS"),
+        ("printer", "INSTALLPRINTER"),
+    ] {
+        command.arg(format!(
+            "{property}={}",
+            u8::from(options.contains(&option))
+        ));
+    }
+    if Config::get_option("stop-service") == "Y" || config::is_outgoing_only() {
+        command.arg("YESDESK_SKIP_SERVICE=1");
+    }
+    let status = command.status()?;
+    match status.code() {
+        Some(0) => (),
+        Some(1223 | 1602) => bail!(crate::lang::translate("yesdesk_install_cancelled".into())),
+        Some(1641 | 3010) if silent => return Ok(()),
+        Some(1641 | 3010) => bail!(crate::lang::translate(
+            "yesdesk_install_reboot_required".into()
+        )),
+        _ => bail!("Windows Installer: {status}"),
+    }
+
+    if !is_installed() || !is_msi_installed()? {
+        bail!(crate::lang::translate(
+            "yesdesk_install_not_registered".into()
+        ));
+    }
+    if !silent {
+        let (_, _, _, exe) = get_install_info();
+        let exe = Path::new(&exe);
+        let mut command = std::process::Command::new(exe);
+        command.env_remove(PORTABLE_APPNAME_RUNTIME_ENV_KEY);
+        if let Some(parent) = exe.parent() {
+            command.current_dir(parent);
+        }
+        if let Err(error) = command.spawn() {
+            bail!(
+                "{} ({error})",
+                crate::lang::translate("yesdesk_install_launch_failed".into())
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn install_me(options: &str, path: String, silent: bool, debug: bool) -> ResultType<()> {
+    if uses_yesdesk_msi() {
+        return install_yesdesk(options, silent);
+    }
     let uninstall_str = get_uninstall(false, false);
     let mut path = path.trim_end_matches('\\').to_owned();
     let (subkey, _path, start_menu, exe) = get_default_install_info();
@@ -1653,6 +1796,15 @@ pub fn run_before_uninstall() -> ResultType<()> {
     run_cmds(get_before_uninstall(true), true, "before_install")
 }
 
+fn installed_exe_name() -> String {
+    let (_, _, _, exe) = get_install_info();
+    Path::new(&exe)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn get_before_uninstall(kill_self: bool) -> String {
     let app_name = crate::get_app_name();
     let ext = app_name.to_lowercase();
@@ -1664,15 +1816,16 @@ fn get_before_uninstall(kill_self: bool) -> String {
     format!(
         "
     chcp 65001
-    sc stop {app_name}
-    sc delete {app_name}
+    sc stop \"{app_name}\"
+    sc delete \"{app_name}\"
     taskkill /F /IM {broker_exe}
-    taskkill /F /IM {app_name}.exe{filter}
+    taskkill /F /IM \"{exe_name}\"{filter}
     reg delete HKEY_CLASSES_ROOT\\.{ext} /f
     reg delete HKEY_CLASSES_ROOT\\{ext} /f
     netsh advfirewall firewall delete rule name=\"{app_name} Service\"
     ",
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
+        exe_name = installed_exe_name(),
     )
 }
 
@@ -1724,6 +1877,15 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
 }
 
 pub fn uninstall_me(kill_self: bool) -> ResultType<()> {
+    if uses_yesdesk_msi() && get_valid_subkey() == YESDESK_INSTALL_KEY {
+        let code = get_reg_of(YESDESK_INSTALL_KEY, "ProductCode");
+        let product = hbb_common::uuid::Uuid::parse_str(&code)?;
+        windows_installer()?
+            .args(["/x", &format!("{{{}}}", product.hyphenated()), "/norestart"])
+            .spawn()?;
+        return Ok(());
+    }
+
     run_cmds(get_uninstall(kill_self, true), true, "uninstall")
 }
 
@@ -1838,8 +2000,12 @@ pub fn add_recent_document(path: &str) {
 }
 
 pub fn is_installed() -> bool {
-    let (_, _, _, exe) = get_install_info();
-    std::fs::metadata(exe).is_ok()
+    let (subkey, _, _, exe) = get_install_info();
+    if uses_yesdesk_msi() {
+        let location = get_reg_of(&subkey, "InstallLocation");
+        return Path::new(&location).is_absolute() && Path::new(&exe).is_file();
+    }
+    Path::new(&exe).is_file()
 }
 
 pub fn get_reg(name: &str) -> String {
@@ -2932,13 +3098,14 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     let cmds = format!(
         "
     chcp 65001
-    sc stop {app_name}
-    sc delete {app_name}
+    sc stop \"{app_name}\"
+    sc delete \"{app_name}\"
     if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
     taskkill /F /IM {broker_exe}
-    taskkill /F /IM {app_name}.exe{filter}
+    taskkill /F /IM \"{exe_name}\"{filter}
     ",
         app_name = crate::get_app_name(),
+        exe_name = installed_exe_name(),
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
     );
     if let Err(err) = run_cmds(cmds, false, "uninstall") {
@@ -2962,7 +3129,7 @@ pub fn install_service() -> bool {
     let cmds = format!(
         "
 chcp 65001
-taskkill /F /IM {app_name}.exe{filter}
+taskkill /F /IM \"{exe_name}\"{filter}
 cscript \"{tray_shortcut}\"
 copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\\"
 {import_config}
@@ -2970,6 +3137,7 @@ copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\
 if exist \"{tray_shortcut}\" del /f /q \"{tray_shortcut}\"
     ",
         app_name = crate::get_app_name(),
+        exe_name = installed_exe_name(),
         import_config = get_import_config(&exe),
         create_service = get_create_service(&exe),
     );
@@ -3022,6 +3190,9 @@ fn get_directory_size_kb(path: &str) -> u64 {
 }
 
 pub fn update_me(debug: bool) -> ResultType<()> {
+    if uses_yesdesk_msi() {
+        bail!("Update YES Desk using a YES Desk MSI package");
+    }
     let app_name = crate::get_app_name();
     let src_exe = std::env::current_exe()?.to_string_lossy().to_string();
     let (subkey, path, _, exe) = get_install_info();
@@ -3133,7 +3304,7 @@ reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
 
     let filter = format!(" /FI \"PID ne {}\"", get_current_pid());
     let restore_service_cmd = if is_service_running {
-        format!("sc start {}", &app_name)
+        format!("sc start \"{}\"", &app_name)
     } else {
         "".to_owned()
     };
@@ -3165,8 +3336,8 @@ reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
     let cmds = format!(
         "
 chcp 65001
-sc stop {app_name}
-taskkill /F /IM {app_name}.exe{filter}
+sc stop \"{app_name}\"
+taskkill /F /IM \"{exe_name}\"{filter}
 {reg_cmd}
 {copy_exe}
 {rename_exe}
@@ -3177,6 +3348,7 @@ taskkill /F /IM {app_name}.exe{filter}
 {sleep}
     ",
         app_name = app_name,
+        exe_name = app_exe_name,
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
         rename_exe = rename_exe_cmd(&src_exe, &path)?,
         remove_meta_toml = remove_meta_toml_cmd(is_msi.unwrap_or(true), &path),
@@ -3413,6 +3585,19 @@ pub fn update_to(file: &str) -> ResultType<()> {
 //    `1` and `3` must be done in custom actions.
 //    We need also to handle the command line parsing to find the tray processes.
 pub fn update_me_msi(msi: &str, quiet: bool) -> ResultType<()> {
+    if uses_yesdesk_msi() {
+        let mut command = windows_installer()?;
+        command.args(["/i", msi, "/norestart"]);
+        if quiet {
+            command.args(["/qn", "YESDESK_LAUNCH_APP=0"]);
+        }
+        let status = command.status()?;
+        return match status.code() {
+            Some(0 | 1641 | 3010) => Ok(()),
+            _ => Err(anyhow!("Windows Installer: {status}")),
+        };
+    }
+
     let cmds = format!(
         "chcp 65001 && msiexec /i {msi} {}",
         if quiet { "/qn LAUNCH_TRAY_APP=N" } else { "" }
@@ -3450,12 +3635,12 @@ fn get_import_config(exe: &str) -> String {
         return "".to_string();
     }
     format!("
-sc stop {app_name}
-sc delete {app_name}
-sc create {app_name} binpath= \"\\\"{exe}\\\" --import-config \\\"{config_path}\\\"\" start= auto DisplayName= \"{app_name} Service\"
-sc start {app_name}
-sc stop {app_name}
-sc delete {app_name}
+sc stop \"{app_name}\"
+sc delete \"{app_name}\"
+sc create \"{app_name}\" binpath= \"\\\"{exe}\\\" --import-config \\\"{config_path}\\\"\" start= auto DisplayName= \"{app_name} Service\"
+sc start \"{app_name}\"
+sc stop \"{app_name}\"
+sc delete \"{app_name}\"
 ",
     app_name = crate::get_app_name(),
     config_path=Config::file().to_str().unwrap_or(""),
@@ -3473,8 +3658,8 @@ if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{ap
 ", app_name = crate::get_app_name())
     } else {
         format!("
-sc create {app_name} binpath= \"\\\"{exe}\\\" --service\" start= auto DisplayName= \"{app_name} Service\"
-sc start {app_name}
+sc create \"{app_name}\" binpath= \"\\\"{exe}\\\" --service\" start= auto DisplayName= \"{app_name} Service\"
+sc start \"{app_name}\"
 ",
     app_name = crate::get_app_name())
     }
@@ -3483,16 +3668,11 @@ sc start {app_name}
 fn run_after_run_cmds(silent: bool) {
     let (_, _, _, exe) = get_install_info();
     if !silent {
-        log::debug!("Spawn new window");
-        allow_err!(std::process::Command::new("cmd")
-            .args(&["/c", "timeout", "/t", "2", "&", &format!("{exe}")])
-            .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
-            .spawn());
+        allow_err!(run_exe_in_cur_session(&exe, vec![], true));
     }
     if Config::get_option("stop-service") != "Y" {
-        allow_err!(std::process::Command::new(&exe).arg("--tray").spawn());
+        allow_err!(run_exe_in_cur_session(&exe, vec!["--tray"], false));
     }
-    std::thread::sleep(std::time::Duration::from_millis(300));
 }
 
 #[inline]
@@ -4064,25 +4244,27 @@ fn get_pids<S: AsRef<str>>(name: S) -> ResultType<Vec<u32>> {
 
 pub fn is_msi_installed() -> std::io::Result<bool> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let uninstall_key = hklm.open_subkey(format!(
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{}",
-        crate::get_app_name()
-    ))?;
+    let subkey = if uses_yesdesk_msi() {
+        get_valid_subkey()
+    } else {
+        get_subkey(&crate::get_app_name(), false)
+    };
+    let uninstall_key = hklm.open_subkey(subkey.trim_start_matches("HKEY_LOCAL_MACHINE\\"))?;
     Ok(1 == uninstall_key.get_value::<u32, _>("WindowsInstaller")?)
 }
 
 pub fn is_cur_exe_the_installed() -> bool {
-    let (_, _, _, exe) = get_install_info();
-    // Check if is installed, because `exe` is the default path if is not installed.
-    if !std::fs::metadata(&exe).is_ok() {
+    if !is_installed() {
         return false;
     }
-    let mut path = std::env::current_exe().unwrap_or_default();
-    if let Ok(linked) = path.read_link() {
-        path = linked;
-    }
-    let path = path.to_string_lossy().to_lowercase();
-    path == exe.to_lowercase()
+    let (_, _, _, exe) = get_install_info();
+    let Ok(current) = std::env::current_exe().and_then(fs::canonicalize) else {
+        return false;
+    };
+    let Ok(installed) = fs::canonicalize(exe) else {
+        return false;
+    };
+    current.to_string_lossy().to_lowercase() == installed.to_string_lossy().to_lowercase()
 }
 
 #[cfg(not(target_pointer_width = "64"))]

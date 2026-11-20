@@ -239,6 +239,7 @@ void runMultiWindow(
     title,
     widget,
     MyTheme.currentThemeMode(),
+    desktopIdentity: true,
   );
   // we do not hide titlebar on win7 because of the frame overflow.
   if (kUseCompatibleUiMode) {
@@ -398,6 +399,7 @@ void _runApp(
 
 void runInstallPage() async {
   await windowManager.ensureInitialized();
+  await windowManager.setPreventClose(true);
   await initEnv(kAppTypeMain);
   _runApp(
     bind.mainGetAppNameSync(),

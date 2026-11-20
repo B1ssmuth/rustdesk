@@ -6,22 +6,28 @@
 
 		<DirectoryRef Id="INSTALLFOLDER_INNER" FileSource="$(var.BuildDir)">
 			<Component Id="App.exe" Guid="620F0F69-4C17-4320-A619-495E329712A4">
-				<File Id="App.exe" Name="$(var.Product).exe" KeyPath="yes" Checksum="yes">
+				<File Id="App.exe" Name="$(var.Executable)" KeyPath="yes" Checksum="yes">
 					<!--<fire:FirewallException Id="AppEx" Name="$(var.Product) Service" Scope="any" IgnoreFailure="yes" />-->
 				</File>
+				<?ifdef YesDesk?>
+				<ServiceInstall Id="YesDeskService" Name="YES Desk" DisplayName="YES Desk Service"
+					Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes" Arguments="--service" />
+				<ServiceControl Id="YesDeskServiceControl" Name="YES Desk" Start="install"
+					Stop="both" Remove="uninstall" Wait="yes" />
+				<?endif?>
 			</Component>
 		</DirectoryRef>
 
 		<CustomAction Id="RemoveInstallFolder.SetParam" Return="check" Property="RemoveInstallFolder" Value="[INSTALLFOLDER_INNER]" />
-		<CustomAction Id="AddFirewallRules.SetParam" Return="check" Property="AddFirewallRules" Value="1[INSTALLFOLDER_INNER]$(var.Product).exe" />
-		<CustomAction Id="RemoveFirewallRules.SetParam" Return="check" Property="RemoveFirewallRules" Value="0[INSTALLFOLDER_INNER]$(var.Product).exe" />
-		<CustomAction Id="CreateStartService.SetParam" Return="check" Property="CreateStartService" Value="$(var.Product);&quot;[INSTALLFOLDER_INNER]$(var.Product).exe&quot; --service" />
+		<CustomAction Id="AddFirewallRules.SetParam" Return="check" Property="AddFirewallRules" Value="1[INSTALLFOLDER_INNER]$(var.Executable)" />
+		<CustomAction Id="RemoveFirewallRules.SetParam" Return="check" Property="RemoveFirewallRules" Value="0[INSTALLFOLDER_INNER]$(var.Executable)" />
+		<CustomAction Id="CreateStartService.SetParam" Return="check" Property="CreateStartService" Value="$(var.Product);&quot;[INSTALLFOLDER_INNER]$(var.Executable)&quot; --service" />
 		<CustomAction Id="TryStopDeleteService.SetParam" Return="check" Property="TryStopDeleteService" Value="$(var.Product)" />
 
 		<CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" FileRef="App.exe" />
 		<CustomAction Id="LaunchAppTray" ExeCommand=" --tray" Return="asyncNoWait" FileRef="App.exe" />
 		<Property Id="TerminateProcesses" Value="AppTest.exe" />
-		<CustomAction Id="TerminateProcesses.SetParam" Return="check" Property="TerminateProcesses" Value="$(var.Product).exe" />
+		<CustomAction Id="TerminateProcesses.SetParam" Return="check" Property="TerminateProcesses" Value="$(var.Executable)" />
 		<CustomAction Id="TerminateBrokers.SetParam" Return="check" Property="TerminateProcesses" Value="RuntimeBroker_rustdesk.exe" />
 		<CustomAction Id="SetPropertyIsServiceRunning.SetParam.AppName" Return="check" Property="AppName" Value="$(var.Product)" />
 		<CustomAction Id="SetPropertyIsServiceRunning.SetParam.PropertyName" Return="check" Property="PropertyName" Value="STOP_SERVICE" />
@@ -32,20 +38,25 @@
 		<CustomAction Id="RemoveAmyuniIdd.SetParam" Return="check" Property="RemoveAmyuniIdd" Value="[INSTALLFOLDER_INNER]" />
 		<CustomAction Id="InstallPrinter.SetParam" Return="check" Property="InstallPrinter" Value="[INSTALLFOLDER_INNER]" />
 		<InstallExecuteSequence>
+			<?ifdef YesDesk?>
+			<InstallServices Condition='NOT YESDESK_SKIP_SERVICE AND NOT STOP_SERVICE = "&apos;Y&apos;" AND NOT CC_CONNECTION_TYPE = "outgoing"' />
+			<StartServices Condition='NOT YESDESK_DEFER_SERVICE_START AND NOT YESDESK_SKIP_SERVICE AND NOT STOP_SERVICE = "&apos;Y&apos;" AND NOT CC_CONNECTION_TYPE = "outgoing"' />
+			<?endif?>
 
-			<Custom Action="SetPropertyIsServiceRunning" After="InstallInitialize" Condition="Installed" />
-			<Custom Action="SetPropertyIsServiceRunning.SetParam.AppName" Before="SetPropertyIsServiceRunning" Condition="Installed" />
-			<Custom Action="SetPropertyIsServiceRunning.SetParam.PropertyName" Before="SetPropertyIsServiceRunning" Condition="Installed" />
+			<Custom Action="SetPropertyIsServiceRunning" After="InstallInitialize" Condition="Installed OR WIX_UPGRADE_DETECTED" />
+			<Custom Action="SetPropertyIsServiceRunning.SetParam.AppName" Before="SetPropertyIsServiceRunning" Condition="Installed OR WIX_UPGRADE_DETECTED" />
+			<Custom Action="SetPropertyIsServiceRunning.SetParam.PropertyName" Before="SetPropertyIsServiceRunning" Condition="Installed OR WIX_UPGRADE_DETECTED" />
 
-			<Custom Action="SetPropertyServiceStop" After="InstallInitialize" Condition="NOT Installed" />
-			<Custom Action="SetPropertyServiceStop.SetParam.ConfigFile" Before="SetPropertyServiceStop" Condition="NOT Installed" />
-			<Custom Action="SetPropertyServiceStop.SetParam.ConfigKey" Before="SetPropertyServiceStop" Condition="NOT Installed" />
-			<Custom Action="SetPropertyServiceStop.SetParam.PropertyName" Before="SetPropertyServiceStop" Condition="NOT Installed" />
+			<Custom Action="SetPropertyServiceStop" After="InstallInitialize" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+			<Custom Action="SetPropertyServiceStop.SetParam.ConfigFile" Before="SetPropertyServiceStop" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+			<Custom Action="SetPropertyServiceStop.SetParam.ConfigKey" Before="SetPropertyServiceStop" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+			<Custom Action="SetPropertyServiceStop.SetParam.PropertyName" Before="SetPropertyServiceStop" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
 
+			<?ifndef YesDesk?>
 			<!-- Do not call CreateStartService if is uninstalling. -->
 			<!-- (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE) means uninstalling. -->
-			<Custom Action="CreateStartService" Before="InstallFinalize" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
-			<Custom Action="CreateStartService.SetParam" Before="CreateStartService" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
+			<Custom Action="CreateStartService" Before="InstallFinalize" Condition="(NOT REMOVE) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
+			<Custom Action="CreateStartService.SetParam" Before="CreateStartService" Condition="(NOT REMOVE) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
 
 			<Custom Action="CustomActionHello" Before="InstallFinalize" />
 
@@ -55,8 +66,13 @@
 
 			<!-- Launch ClientLauncher if installing or already installed and not uninstalling -->
 			<!-- https://learn.microsoft.com/en-us/windows/win32/msi/uilevel -->
-			<Custom Action="LaunchApp" After="InstallFinalize" Condition="(NOT UILevel=2) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) "/>
-			<Custom Action="LaunchAppTray" After="InstallFinalize" Condition="(LAUNCH_TRAY_APP=&quot;Y&quot; OR LAUNCH_TRAY_APP=&quot;1&quot;) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)"/>
+			<Custom Action="LaunchApp" After="InstallFinalize" Condition="(NOT UILevel=2) AND (NOT REMOVE) "/>
+			<Custom Action="LaunchAppTray" After="InstallFinalize" Condition="(LAUNCH_TRAY_APP=&quot;Y&quot; OR LAUNCH_TRAY_APP=&quot;1&quot;) AND (NOT REMOVE) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)"/>
+
+			<?else?>
+			<Custom Action="LaunchApp" After="InstallFinalize" Condition='YESDESK_LAUNCH_APP = "1" AND UILevel &gt; 2 AND NOT REMOVE'/>
+			<Custom Action="LaunchAppTray" After="InstallFinalize" Condition='YESDESK_LAUNCH_APP = "1" AND UILevel &gt; 2 AND NOT REMOVE AND NOT YESDESK_SKIP_SERVICE AND NOT STOP_SERVICE = "&apos;Y&apos;" AND NOT CC_CONNECTION_TYPE = "outgoing"'/>
+			<?endif?>
 
 			<!-- https://learn.microsoft.com/en-us/windows/win32/msi/operating-system-property-values -->
 			<!-- We have to use `VersionNT` to instead of `IsWindows10OrGreater()` in the custom action.
@@ -67,16 +83,17 @@
 			Some msi packages reset the `VersionNT` value to 1000 on Windows 10.
 			https://www.advancedinstaller.com/user-guide/qa-OS-dependent-install.html -->
 			<!-- Remote printer also works on Win8.1 in my test. -->
-			<Custom Action="InstallPrinter" Before="InstallFinalize" Condition="VersionNT &gt;= 603 AND PRINTER = 1 OR PRINTER = &quot;Y&quot; OR PRINTER = &quot;y&quot;" />
+			<Custom Action="InstallPrinter" Before="InstallFinalize" Condition='VersionNT &gt;= 603 AND NOT REMOVE AND (PRINTER = 1 OR PRINTER ~= "Y")' />
 			<Custom Action="InstallPrinter.SetParam" Before="InstallPrinter" Condition="VersionNT &gt;= 603" />
 
 			<!--Workaround of "fire:FirewallException". If Outbound="Yes" or Outbound="true", the following error occurs.-->
 			<!--ExecFirewallExceptions: Error 0x80070057: failed to add app to the authorized apps list-->
-			<Custom Action="AddFirewallRules" Before="InstallFinalize" Condition="NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)"/>
-			<Custom Action="AddFirewallRules.SetParam" Before="AddFirewallRules" Condition="NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)"/>
+			<Custom Action="AddFirewallRules" Before="InstallFinalize" Condition="NOT REMOVE"/>
+			<Custom Action="AddFirewallRules.SetParam" Before="AddFirewallRules" Condition="NOT REMOVE"/>
 
-			<Custom Action="AddRegSoftwareSASGeneration" Before="InstallFinalize" Condition="NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)"/>
+			<Custom Action="AddRegSoftwareSASGeneration" Before="InstallFinalize" Condition="NOT REMOVE AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)"/>
 
+			<?ifndef YesDesk?>
 			<Custom Action="RemoveInstallFolder" Before="RemoveFiles"/>
 			<Custom Action="RemoveInstallFolder.SetParam" Before="RemoveInstallFolder"/>
 			<Custom Action="TryStopDeleteService" Before="RemoveInstallFolder.SetParam" />
@@ -93,6 +110,11 @@
 			<Custom Action="TerminateBrokers.SetParam" Before="TerminateBrokers"/>
 			<Custom Action="RemoveAmyuniIdd" Before="RemoveInstallFolder"/>
 			<Custom Action="RemoveAmyuniIdd.SetParam" Before="RemoveAmyuniIdd"/>
+			<?else?>
+			<Custom Action="UninstallPrinter" Before="RemoveFiles" Condition='VersionNT &gt;= 603 AND REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE' />
+			<Custom Action="RemoveFirewallRules" Before="RemoveFiles" Condition='REMOVE = "ALL"'/>
+			<Custom Action="RemoveFirewallRules.SetParam" Before="RemoveFirewallRules" Condition='REMOVE = "ALL"'/>
+			<?endif?>
 		</InstallExecuteSequence>
 
 		<!-- Shortcuts -->

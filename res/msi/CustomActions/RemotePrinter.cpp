@@ -21,6 +21,7 @@ namespace RemotePrinter
     LPCWCH RD_DRIVER_INF_PATH = L"drivers\\RustDeskPrinterDriver\\RustDeskPrinterDriver.inf";
     LPCWCH RD_PRINTER_PORT = L"RustDesk Printer";
     LPCWCH RD_PRINTER_NAME = L"RustDesk Printer";
+    constexpr bool RD_KEEP_SHARED_DRIVER = false;
     LPCWCH RD_PRINTER_DRIVER_NAME = L"RustDesk v4 Printer Driver";
     LPCWCH XCV_MONITOR_LOCAL_PORT = L",XcvMonitor Local Port";
 
@@ -477,7 +478,8 @@ namespace RemotePrinter
             WcaLog(LOGMSG_STANDARD, "Local port added successfully\n");
         }
 
-        if (getInstalledDriverVersion(RD_PRINTER_DRIVER_NAME) > 0)
+        const bool driverInstalled = getInstalledDriverVersion(RD_PRINTER_DRIVER_NAME) > 0;
+        if (driverInstalled && !RD_KEEP_SHARED_DRIVER)
         {
             deletePrinter(RD_PRINTER_NAME);
             if (FALSE == uninstallDriver(RD_PRINTER_DRIVER_NAME))
@@ -486,13 +488,16 @@ namespace RemotePrinter
             }
         }
 
-        if (FALSE == installDriver(RD_PRINTER_DRIVER_NAME, infFile.c_str()))
+        if (!(driverInstalled && RD_KEEP_SHARED_DRIVER))
         {
-            WcaLog(LOGMSG_STANDARD, "Driver installation failed, still try to add the printer\n");
-        }
-        else
-        {
-            WcaLog(LOGMSG_STANDARD, "Driver installed successfully\n");
+            if (FALSE == installDriver(RD_PRINTER_DRIVER_NAME, infFile.c_str()))
+            {
+                WcaLog(LOGMSG_STANDARD, "Driver installation failed, still try to add the printer\n");
+            }
+            else
+            {
+                WcaLog(LOGMSG_STANDARD, "Driver installed successfully\n");
+            }
         }
 
         if (FALSE == addPrinter(RD_PRINTER_NAME, RD_PRINTER_DRIVER_NAME, RD_PRINTER_PORT))
@@ -509,8 +514,11 @@ namespace RemotePrinter
     {
         deletePrinter(RD_PRINTER_NAME);
         WcaLog(LOGMSG_STANDARD, "Deleted the printer\n");
-        uninstallDriver(RD_PRINTER_DRIVER_NAME);
-        WcaLog(LOGMSG_STANDARD, "Uninstalled the printer driver\n");
+        if (!RD_KEEP_SHARED_DRIVER)
+        {
+            uninstallDriver(RD_PRINTER_DRIVER_NAME);
+            WcaLog(LOGMSG_STANDARD, "Uninstalled the printer driver\n");
+        }
         checkDeleteLocalPort(RD_PRINTER_PORT);
         WcaLog(LOGMSG_STANDARD, "Deleted the local port\n");
     }

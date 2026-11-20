@@ -249,6 +249,47 @@ void main() {
         YesDeskColors.dark);
   });
 
+  testWidgets('one-time password is hidden and resets when rotated',
+      (tester) async {
+    var currentPassword = 'temporary-value';
+    String? copied;
+    late StateSetter rebuild;
+    await tester.pumpWidget(_app(StatefulBuilder(builder: (context, setState) {
+      rebuild = setState;
+      return SizedBox(
+        width: 320,
+        child: YesDeskProtectedCredential(
+          label: 'Одноразовый пароль',
+          password: currentPassword,
+          showLabel: 'Показать пароль',
+          hideLabel: 'Скрыть пароль',
+          copyLabel: 'Копировать',
+          onCopy: () => copied = currentPassword,
+        ),
+      );
+    })));
+
+    expect(find.text(currentPassword), findsNothing);
+    expect(find.text('••••••'), findsOneWidget);
+    await tester.tap(find.byTooltip('Копировать'));
+    expect(copied, currentPassword);
+    expect(find.text(currentPassword), findsNothing);
+
+    await tester.tap(find.byTooltip('Показать пароль'));
+    await tester.pump();
+    expect(find.text(currentPassword), findsOneWidget);
+    await tester.tap(find.byTooltip('Скрыть пароль'));
+    await tester.pump();
+    expect(find.text(currentPassword), findsNothing);
+
+    await tester.tap(find.byTooltip('Показать пароль'));
+    await tester.pump();
+    rebuild(() => currentPassword = 'new-temporary-value');
+    await tester.pump();
+    expect(find.text(currentPassword), findsNothing);
+    expect(find.byTooltip('Показать пароль'), findsOneWidget);
+  });
+
   test('both palettes meet AA contrast for text, accents and warning states',
       () {
     double ratio(Color a, Color b) {
@@ -268,6 +309,14 @@ void main() {
           ratio(palette.onAccent, palette.accent), greaterThanOrEqualTo(4.5));
       expect(ratio(palette.warning, palette.canvas), greaterThanOrEqualTo(4.5));
       expect(ratio(palette.error, palette.canvas), greaterThanOrEqualTo(4.5));
+      for (final background in [
+        palette.canvas,
+        palette.surface,
+        palette.raised
+      ]) {
+        expect(ratio(palette.online, background), greaterThanOrEqualTo(4.5));
+        expect(ratio(palette.offline, background), greaterThanOrEqualTo(4.5));
+      }
     }
   });
 }

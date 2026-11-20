@@ -10,10 +10,8 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
-import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
-import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/plugin/ui_manager.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
@@ -47,7 +45,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   var watchIsInputMonitoring = false;
   var watchIsCanRecordAudio = false;
   Timer? _updateTimer;
-  bool isCardClosed = false;
+  final _closedHelpCards = <String>{};
 
   bool _showSupport = false;
   final RxBool _block = false.obs;
@@ -182,7 +180,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (bind.isCustomClient()) Align(child: loadPowered(context)),
                 Align(child: _logo),
                 if (!outgoingOnly) ...[
                   Text(translate('Your Desktop'),
@@ -200,7 +197,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   _buildCredentials(),
                   _buildPasswordWarning(),
                 ],
-                Obx(() => buildHelpCards(stateGlobal.updateUrl.value)),
+                buildHelpCards(),
                 buildPluginEntry(),
               ],
             ),
@@ -268,13 +265,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 onCopy: model.hasServerId ? () => _copyCredential(id) : null,
               ),
               const Divider(height: YesDeskSpace.lg),
-              YesDeskCredential(
+              YesDeskProtectedCredential(
                 label: translate('One-time Password'),
-                value: showOneTime &&
-                        temporaryPassword.isNotEmpty &&
-                        temporaryPassword != '-'
-                    ? temporaryPassword
-                    : '—',
+                showLabel: translate('yesdesk_show_password'),
+                hideLabel: translate('yesdesk_hide_password'),
+                password: copyPassword ? temporaryPassword : null,
                 copyLabel: copyLabel,
                 onCopy: copyPassword
                     ? () => _copyCredential(temporaryPassword)
@@ -340,54 +335,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     );
   }
 
-  Widget buildHelpCards(String updateUrl) {
-    if (!bind.isCustomClient() &&
-        updateUrl.isNotEmpty &&
-        !isCardClosed &&
-        bind.mainUriPrefixSync().contains('rustdesk')) {
-      final isToUpdate = (isWindows || isMacOS) && bind.mainIsInstalled();
-      String btnText = isToUpdate ? 'Update' : 'Download';
-      GestureTapCallback onPressed = () async {
-        final Uri url = Uri.parse('https://rustdesk.com/download');
-        await launchUrl(url);
-      };
-      if (isToUpdate) {
-        onPressed = () {
-          handleUpdate(updateUrl);
-        };
-      }
-      return buildInstallCard(
-          "Status",
-          "${translate("new-version-of-{${bind.mainGetAppNameSync()}}-tip")} (${bind.mainGetNewVersion()}).",
-          btnText,
-          onPressed,
-          closeButton: true,
-          help: isToUpdate ? 'Changelog' : null,
-          link: isToUpdate
-              ? 'https://github.com/rustdesk/rustdesk/releases/tag/${bind.mainGetNewVersion()}'
-              : null);
-    }
+  Widget buildHelpCards() {
     if (systemError.isNotEmpty) {
       return buildInstallCard("Error", systemError, "", null);
     }
 
-    if (isWindows && !bind.isDisableInstallation()) {
-      if (!bind.mainIsInstalled()) {
-        return buildInstallCard(
-            "", bind.isOutgoingOnly() ? "" : "install_tip", "Install",
-            () async {
-          await rustDeskWinManager.closeAllSubWindows();
-          bind.mainGotoInstall();
-        });
-      } else if (bind.mainIsInstalledLowerVersion()) {
-        return buildInstallCard(
-            "Status", "Your installation is lower version.", "Click to upgrade",
-            () async {
-          await rustDeskWinManager.closeAllSubWindows();
-          bind.mainUpdateMe();
-        });
-      }
-    } else if (isMacOS) {
+    if (isMacOS) {
       final isOutgoingOnly = bind.isOutgoingOnly();
       if (!(isOutgoingOnly || bind.mainIsCanScreenRecording(prompt: false))) {
         return buildInstallCard("Permissions", "config_screen", "Configure",
@@ -495,8 +448,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     bool closeButton = false,
     String? closeOption,
   }) {
-    if (bind.mainGetBuildinOption(key: kOptionHideHelpCards) == 'Y' &&
-        content != 'install_daemon_tip') {
+    if ((bind.mainGetBuildinOption(key: kOptionHideHelpCards) == 'Y' &&
+            content != 'install_daemon_tip' &&
+            title != 'Error') ||
+        _closedHelpCards.contains(content)) {
       return const SizedBox.shrink();
     }
 
@@ -505,7 +460,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         await bind.mainSetLocalOption(key: closeOption, value: 'N');
         if (bind.mainGetLocalOption(key: closeOption) != 'N') return;
       }
-      if (mounted) setState(() => isCardClosed = true);
+      if (mounted) setState(() => _closedHelpCards.add(content));
     }
 
     return Builder(builder: (context) {
@@ -853,7 +808,7 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
       title: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.key, color: MyTheme.accent),
+          Icon(Icons.key, color: Theme.of(context).colorScheme.primary),
           Text(translate("Set Password")).paddingOnly(left: 10),
         ],
       ),
@@ -918,7 +873,11 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
             if (statusTip.isNotEmpty)
               Row(
                 children: [
-                  Icon(Icons.info, color: Colors.amber, size: 18)
+                  Icon(Icons.info,
+                          color: Theme.of(context)
+                              .extension<YesDeskColors>()
+                              ?.warning,
+                          size: 18)
                       .marginOnly(right: 6),
                   Expanded(
                       child: Text(
@@ -935,17 +894,7 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
                   spacing: 4,
                   children: rules.map((e) {
                     var checked = e.validate(rxPass.value.trim());
-                    return Chip(
-                        label: Text(
-                          e.name,
-                          style: TextStyle(
-                              color: checked
-                                  ? const Color(0xFF0A9471)
-                                  : Color.fromARGB(255, 198, 86, 157)),
-                        ),
-                        backgroundColor: checked
-                            ? const Color(0xFFD0F7ED)
-                            : Color.fromARGB(255, 247, 205, 232));
+                    return YesDeskValidationChip(label: e.name, valid: checked);
                   }).toList(),
                 ))
           ],
@@ -961,6 +910,7 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
         final removeButton = dialogButton(
           "Remove",
           icon: Icon(Icons.delete_outline_rounded),
+          isOutline: true,
           onPressed: () async {
             setState(() {
               errMsg0 = "";
@@ -976,8 +926,9 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
             }
             close();
           },
-          buttonStyle: ButtonStyle(
-              backgroundColor: MaterialStatePropertyAll(Colors.red)),
+          buttonStyle: OutlinedButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
         final okButton = dialogButton(
           "OK",

@@ -97,19 +97,21 @@ pub fn get_id() -> String {
 }
 
 #[inline]
-pub fn goto_install() {
-    allow_err!(crate::run_me(vec!["--install"]));
-    std::process::exit(0);
+pub fn goto_install() -> bool {
+    if crate::run_me(vec!["--install"]).is_ok() {
+        std::process::exit(0);
+    }
+    false
 }
 
 #[inline]
 pub fn install_me(_options: String, _path: String, _silent: bool, _debug: bool) {
     #[cfg(windows)]
     std::thread::spawn(move || {
-        allow_err!(crate::platform::windows::install_me(
-            &_options, _path, _silent, _debug
-        ));
-        std::process::exit(0);
+        match crate::platform::windows::install_me(&_options, _path, _silent, _debug) {
+            Ok(()) => std::process::exit(0),
+            Err(error) => log::error!("Installation failed: {error}"),
+        }
     });
 }
 

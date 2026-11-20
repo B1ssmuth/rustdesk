@@ -62,6 +62,7 @@ class _InstallPageBody extends StatefulWidget {
 
 class _InstallPageBodyState extends State<_InstallPageBody>
     with WindowListener {
+  final _installationError = ''.obs;
   late final TextEditingController controller;
   final RxBool startmenu = true.obs;
   final RxBool desktopicon = true.obs;
@@ -85,8 +86,8 @@ class _InstallPageBodyState extends State<_InstallPageBody>
 
   @override
   void initState() {
-    windowManager.addListener(this);
     super.initState();
+    windowManager.addListener(this);
   }
 
   @override
@@ -98,6 +99,7 @@ class _InstallPageBodyState extends State<_InstallPageBody>
 
   @override
   void onWindowClose() {
+    if (showProgress.value) return;
     gFFI.close();
     super.onWindowClose();
     windowManager.setPreventClose(false);
@@ -151,14 +153,15 @@ class _InstallPageBodyState extends State<_InstallPageBody>
                       ),
                     ).workaroundFreezeLinuxMint().marginOnly(right: 10),
                   ),
-                  Obx(
-                    () => OutlinedButton.icon(
-                      icon: Icon(Icons.folder_outlined, size: 16),
-                      onPressed: btnEnabled.value ? selectInstallPath : null,
-                      style: buttonStyle,
-                      label: Text(translate('Change Path')),
-                    ),
-                  )
+                  if (appName != 'YES Desk')
+                    Obx(
+                      () => OutlinedButton.icon(
+                        icon: Icon(Icons.folder_outlined, size: 16),
+                        onPressed: btnEnabled.value ? selectInstallPath : null,
+                        style: buttonStyle,
+                        label: Text(translate('Change Path')),
+                      ),
+                    )
                 ],
               ).marginSymmetric(vertical: 2 * em),
               Option(startmenu, label: 'Create start menu shortcuts')
@@ -179,6 +182,16 @@ class _InstallPageBodyState extends State<_InstallPageBody>
                   ),
                 ),
               ).marginSymmetric(vertical: 2 * em),
+              Obx(() => _installationError.value.isEmpty
+                  ? const SizedBox.shrink()
+                  : Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        _installationError.value,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error),
+                      ).marginOnly(bottom: 12),
+                    )),
               Row(
                 children: [
                   Expanded(
@@ -224,18 +237,36 @@ class _InstallPageBodyState extends State<_InstallPageBody>
         ));
   }
 
-  void install() {
-    do_install() {
-      btnEnabled.value = false;
-      showProgress.value = true;
-      String args = '';
-      if (startmenu.value) args += ' startmenu';
-      if (desktopicon.value) args += ' desktopicon';
-      if (printer.value) args += ' printer';
-      bind.installInstallMe(options: args, path: controller.text);
+  Future<void> install() async {
+    btnEnabled.value = false;
+    showProgress.value = true;
+    _installationError.value = '';
+    final options = [
+      if (startmenu.value) 'startmenu',
+      if (desktopicon.value) 'desktopicon',
+      if (printer.value) 'printer',
+    ].join(' ');
+    try {
+      final error =
+          await bind.installInstallMe(options: options, path: controller.text);
+      if (!mounted) return;
+      showProgress.value = false;
+      if (error.isEmpty) {
+        await windowManager.close();
+      } else {
+        _installationError.value = error;
+      }
+    } catch (error) {
+      if (mounted) {
+        _installationError.value =
+            '${translate('Installation failed!')} ($error)';
+      }
+    } finally {
+      if (mounted) {
+        btnEnabled.value = true;
+        showProgress.value = false;
+      }
     }
-
-    do_install();
   }
 
   void selectInstallPath() async {

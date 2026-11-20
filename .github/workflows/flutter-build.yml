@@ -152,10 +152,8 @@ jobs:
       - name: Build msi
         shell: pwsh
         run: |
-          # Keep the installed executable and MSI identity used by previous builds.
-          Copy-Item "./rustdesk/rustdesk.exe" "./rustdesk/YES_Desk.exe"
           pushd ./res/msi
-          python preprocess.py --arp -d ../../rustdesk --display-name 'YES Desk' --manufacturer 'YES Apart' --product-url 'https://github.com/B1ssmuth/rustdesk' --support-url 'https://github.com/B1ssmuth/rustdesk/issues'
+          python preprocess.py --yesdesk -d ../../rustdesk --product-url 'https://github.com/B1ssmuth/rustdesk' --support-url 'https://github.com/B1ssmuth/rustdesk/issues'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           nuget restore msi.sln
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
@@ -165,6 +163,8 @@ jobs:
           if (!(Test-Path "./SignOutput")) { New-Item -ItemType Directory -Path "./SignOutput" }
           $msiPath = "./res/msi/Package/bin/x64/Release/en-us/Package.msi"
           if (Test-Path $msiPath) {
+            # The portable packer embeds the completed MSI. The MSI never includes itself.
+            Copy-Item $msiPath "./rustdesk/YES_Desk.msi"
             Move-Item $msiPath "./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi"
           } else {
             Write-Error "MSI build failed: Package.msi not found"
@@ -182,6 +182,13 @@ jobs:
           popd
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
+
+      - name: Verify YES Desk Windows installation
+        shell: pwsh
+        run: |
+          ./res/msi/test-yesdesk-install.ps1 `
+            -Msi "./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi" `
+            -PortableExe "./SignOutput/YES_Desk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe"
 
       - name: Upload final binaries
         uses: actions/upload-artifact@v4

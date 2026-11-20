@@ -2267,8 +2267,7 @@ pub fn main_set_share_rdp(enable: bool) {
 }
 
 pub fn main_goto_install() -> SyncReturn<bool> {
-    goto_install();
-    SyncReturn(true)
+    SyncReturn(goto_install())
 }
 
 pub fn main_get_new_version() -> SyncReturn<String> {
@@ -2300,8 +2299,26 @@ pub fn install_run_without_install() {
     run_without_install();
 }
 
-pub fn install_install_me(options: String, path: String) {
-    install_me(options, path, false, false);
+pub fn install_has_bundled_installer() -> SyncReturn<bool> {
+    #[cfg(windows)]
+    return SyncReturn(crate::platform::windows::has_bundled_installer());
+    #[cfg(not(windows))]
+    return SyncReturn(false);
+}
+
+pub fn install_install_me(options: String, path: String) -> String {
+    #[cfg(windows)]
+    {
+        match crate::platform::windows::install_me(&options, path, false, false) {
+            Ok(()) => String::new(),
+            Err(error) => error.to_string(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (options, path);
+        "Installation is only available on Windows.".to_owned()
+    }
 }
 
 pub fn install_install_path() -> SyncReturn<String> {

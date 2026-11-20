@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -142,7 +143,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
             const AddButton(),
           ],
         ),
-        selectedBorderColor: MyTheme.accent,
+        selectedBorderColor: Theme.of(context).colorScheme.primary,
         pageViewBuilder: (pageView) => pageView,
         labelGetter: DesktopTab.tablabelGetter,
         tabBuilder: (key, icon, label, themeConf) => Obx(() {
@@ -591,13 +592,14 @@ class _RelativeMouseModeHint extends StatelessWidget {
         return const SizedBox.shrink();
       }
 
+      final warning = YesDeskColors.of(context).warning;
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         margin: const EdgeInsets.only(right: 8),
         decoration: BoxDecoration(
-          color: Colors.orange.withOpacity(0.2),
+          color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: Colors.orange.withOpacity(0.5)),
+          border: Border.all(color: warning.withOpacity(0.6)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -605,7 +607,7 @@ class _RelativeMouseModeHint extends StatelessWidget {
             Icon(
               Icons.mouse,
               size: 14,
-              color: Colors.orange[700],
+              color: warning,
             ),
             const SizedBox(width: 4),
             Text(
@@ -613,7 +615,7 @@ class _RelativeMouseModeHint extends StatelessWidget {
                   'rel-mouse-exit-{${isMacOS ? "Cmd+G" : "Ctrl+Alt"}}-tip'),
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.orange[700],
+                color: warning,
               ),
             ),
           ],

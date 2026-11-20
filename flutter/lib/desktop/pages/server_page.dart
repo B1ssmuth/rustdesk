@@ -10,6 +10,7 @@ import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/cm_file_model.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:get/get.dart';
 import 'package:percent_indicator/linear_percent_indicator.dart';
 import 'package:provider/provider.dart';
@@ -581,19 +582,20 @@ class _CmHeaderState extends State<_CmHeader>
   }
 
   Widget _buildInitialAvatar() {
+    final colors = YesDeskColors.of(context);
     return Container(
       width: 70,
       height: 70,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: str2color(client.name),
+        color: colors.raised,
         borderRadius: BorderRadius.circular(15.0),
       ),
       child: Text(
         client.name.isNotEmpty ? client.name[0] : '?',
         style: TextStyle(
           fontWeight: FontWeight.bold,
-          color: Colors.white,
+          color: colors.text,
           fontSize: 55,
         ),
       ),
@@ -614,12 +616,13 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
   late final client = widget.client;
   Widget buildPermissionIcon(bool enabled, IconData iconData,
       Function(bool)? onTap, String tooltipText) {
+    final colors = YesDeskColors.of(context);
     return Tooltip(
       message: "$tooltipText: ${enabled ? "ON" : "OFF"}",
       waitDuration: Duration.zero,
       child: Container(
         decoration: BoxDecoration(
-          color: enabled ? MyTheme.accent : Colors.grey[700],
+          color: enabled ? colors.accent : colors.raised,
           borderRadius: BorderRadius.circular(10.0),
         ),
         padding: EdgeInsets.all(8.0),
@@ -632,7 +635,7 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
               Expanded(
                 child: Icon(
                   iconData,
-                  color: Colors.white,
+                  color: enabled ? colors.onAccent : colors.muted,
                 ),
               ),
             ],
@@ -835,6 +838,7 @@ class _CmControlPanel extends StatelessWidget {
   }
 
   buildAuthorized(BuildContext context) {
+    final colors = YesDeskColors.of(context);
     final bool canElevate = bind.cmCanElevate();
     final model = Provider.of<ServerModel>(context);
     final showElevation = canElevate &&
@@ -848,82 +852,83 @@ class _CmControlPanel extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: buildButton(context,
-                    color: MyTheme.accent,
-                    onClick: null, onTapDown: (details) async {
-                  final devicesInfo =
-                      await AudioInput.getDevicesInfo(true, true);
-                  List<String> devices = devicesInfo['devices'] as List<String>;
-                  if (devices.isEmpty) {
-                    msgBox(
-                      gFFI.sessionId,
-                      'custom-nocancel-info',
-                      'Prompt',
-                      'no_audio_input_device_tip',
-                      '',
-                      gFFI.dialogManager,
-                    );
-                    return;
-                  }
+                child: buildButton(
+                  context,
+                  color: colors.accent,
+                  onClick: null,
+                  onTapDown: (details) async {
+                    final devicesInfo =
+                        await AudioInput.getDevicesInfo(true, true);
+                    List<String> devices =
+                        devicesInfo['devices'] as List<String>;
+                    if (devices.isEmpty) {
+                      msgBox(
+                        gFFI.sessionId,
+                        'custom-nocancel-info',
+                        'Prompt',
+                        'no_audio_input_device_tip',
+                        '',
+                        gFFI.dialogManager,
+                      );
+                      return;
+                    }
 
-                  String currentDevice = devicesInfo['current'] as String;
-                  final x = details.globalPosition.dx;
-                  final y = details.globalPosition.dy;
-                  final position = RelativeRect.fromLTRB(x, y, x, y);
-                  showMenu(
-                    context: context,
-                    position: position,
-                    items: devices
-                        .map((d) => PopupMenuItem<String>(
-                              value: d,
-                              height: 18,
-                              padding: EdgeInsets.zero,
-                              onTap: () => AudioInput.setDevice(d, true, true),
-                              child: IgnorePointer(
-                                  child: RadioMenuButton(
+                    String currentDevice = devicesInfo['current'] as String;
+                    final x = details.globalPosition.dx;
+                    final y = details.globalPosition.dy;
+                    final position = RelativeRect.fromLTRB(x, y, x, y);
+                    showMenu(
+                      context: context,
+                      position: position,
+                      items: devices
+                          .map((d) => PopupMenuItem<String>(
                                 value: d,
-                                groupValue: currentDevice,
-                                onChanged: (v) {
-                                  if (v != null)
-                                    AudioInput.setDevice(v, true, true);
-                                },
-                                child: Container(
-                                  child: Text(
-                                    d,
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
+                                height: 18,
+                                padding: EdgeInsets.zero,
+                                onTap: () =>
+                                    AudioInput.setDevice(d, true, true),
+                                child: IgnorePointer(
+                                    child: RadioMenuButton(
+                                  value: d,
+                                  groupValue: currentDevice,
+                                  onChanged: (v) {
+                                    if (v != null)
+                                      AudioInput.setDevice(v, true, true);
+                                  },
+                                  child: Container(
+                                    child: Text(
+                                      d,
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                    constraints: BoxConstraints(
+                                        maxWidth:
+                                            kConnectionManagerWindowSizeClosedChat
+                                                    .width -
+                                                80),
                                   ),
-                                  constraints: BoxConstraints(
-                                      maxWidth:
-                                          kConnectionManagerWindowSizeClosedChat
-                                                  .width -
-                                              80),
-                                ),
-                              )),
-                            ))
-                        .toList(),
-                  );
-                },
-                    icon: Icon(
-                      Icons.call_rounded,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    text: "Audio input",
-                    textColor: Colors.white),
+                                )),
+                              ))
+                          .toList(),
+                    );
+                  },
+                  icon: Icon(
+                    Icons.call_rounded,
+                    size: 14,
+                  ),
+                  text: "Audio input",
+                ),
               ),
               Expanded(
                 child: buildButton(
                   context,
-                  color: Colors.red,
+                  color: colors.error,
                   onClick: () => closeVoiceCall(),
                   icon: Icon(
                     Icons.call_end_rounded,
-                    color: Colors.white,
                     size: 14,
                   ),
                   text: "Stop voice call",
-                  textColor: Colors.white,
                 ),
               )
             ],
@@ -934,29 +939,27 @@ class _CmControlPanel extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: buildButton(context,
-                    color: MyTheme.accent,
-                    onClick: () => handleVoiceCall(true),
-                    icon: Icon(
-                      Icons.call_rounded,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    text: "Accept",
-                    textColor: Colors.white),
+                child: buildButton(
+                  context,
+                  color: colors.accent,
+                  onClick: () => handleVoiceCall(true),
+                  icon: Icon(
+                    Icons.call_rounded,
+                    size: 14,
+                  ),
+                  text: "Accept",
+                ),
               ),
               Expanded(
                 child: buildButton(
                   context,
-                  color: Colors.red,
+                  color: colors.error,
                   onClick: () => handleVoiceCall(false),
                   icon: Icon(
                     Icons.phone_disabled_rounded,
-                    color: Colors.white,
                     size: 14,
                   ),
                   text: "Dismiss",
-                  textColor: Colors.white,
                 ),
               )
             ],
@@ -965,43 +968,40 @@ class _CmControlPanel extends StatelessWidget {
         Offstage(
           offstage: !client.fromSwitch,
           child: buildButton(context,
-              color: Colors.purple,
+              color: colors.raised,
               onClick: () => handleSwitchBack(context),
-              icon: Icon(Icons.reply, color: Colors.white),
-              text: "Switch Sides",
-              textColor: Colors.white),
+              icon: Icon(Icons.reply),
+              text: "Switch Sides"),
         ),
         Offstage(
           offstage: !showElevation,
           child: buildButton(
             context,
-            color: MyTheme.accent,
+            color: colors.accent,
             onClick: () {
               handleElevate(context);
               windowManager.minimize();
             },
             icon: Icon(
               Icons.security_rounded,
-              color: Colors.white,
               size: 14,
             ),
             text: 'Elevate',
-            textColor: Colors.white,
           ),
         ),
         Row(
           children: [
             Expanded(
-              child: buildButton(context,
-                  color: Colors.redAccent,
-                  onClick: handleDisconnect,
-                  text: 'Disconnect',
-                  icon: Icon(
-                    Icons.link_off_rounded,
-                    color: Colors.white,
-                    size: 14,
-                  ),
-                  textColor: Colors.white),
+              child: buildButton(
+                context,
+                color: colors.error,
+                onClick: handleDisconnect,
+                text: 'Disconnect',
+                icon: Icon(
+                  Icons.link_off_rounded,
+                  size: 14,
+                ),
+              ),
             ),
           ],
         )
@@ -1010,20 +1010,23 @@ class _CmControlPanel extends StatelessWidget {
   }
 
   buildDisconnected(BuildContext context) {
+    final colors = YesDeskColors.of(context);
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Expanded(
-            child: buildButton(context,
-                color: MyTheme.accent,
-                onClick: handleClose,
-                text: 'Close',
-                textColor: Colors.white)),
+            child: buildButton(
+          context,
+          color: colors.accent,
+          onClick: handleClose,
+          text: 'Close',
+        )),
       ],
     ).marginOnly(bottom: buttonBottomMargin);
   }
 
   buildUnAuthorized(BuildContext context) {
+    final colors = YesDeskColors.of(context);
     final bool canElevate = bind.cmCanElevate();
     final model = Provider.of<ServerModel>(context);
     final showElevation = canElevate &&
@@ -1035,7 +1038,7 @@ class _CmControlPanel extends StatelessWidget {
       children: [
         Offstage(
           offstage: !showElevation || !showAccept,
-          child: buildButton(context, color: Colors.green[700], onClick: () {
+          child: buildButton(context, color: colors.online, onClick: () {
             handleAccept(context);
             handleElevate(context);
             windowManager.minimize();
@@ -1043,10 +1046,8 @@ class _CmControlPanel extends StatelessWidget {
               text: 'Accept and Elevate',
               icon: Icon(
                 Icons.security_rounded,
-                color: Colors.white,
                 size: 14,
               ),
-              textColor: Colors.white,
               tooltip: 'accept_and_elevate_btn_tooltip'),
         ),
         Row(
@@ -1058,13 +1059,12 @@ class _CmControlPanel extends StatelessWidget {
                   children: [
                     buildButton(
                       context,
-                      color: MyTheme.accent,
+                      color: colors.accent,
                       onClick: () {
                         handleAccept(context);
                         windowManager.minimize();
                       },
                       text: 'Accept',
-                      textColor: Colors.white,
                     ),
                   ],
                 ),
@@ -1073,10 +1073,9 @@ class _CmControlPanel extends StatelessWidget {
               child: buildButton(
                 context,
                 color: Colors.transparent,
-                border: Border.all(color: Colors.grey),
+                border: Border.all(color: colors.outline),
                 onClick: handleDisconnect,
                 text: 'Cancel',
-                textColor: null,
               ),
             ),
           ],
@@ -1091,29 +1090,27 @@ class _CmControlPanel extends StatelessWidget {
       Widget? icon,
       BoxBorder? border,
       required String text,
-      required Color? textColor,
       String? tooltip,
       GestureTapDownCallback? onTapDown}) {
     assert(!(onClick == null && onTapDown == null));
-    Widget textWidget;
-    if (icon != null) {
-      textWidget = Text(
+    final colors = YesDeskColors.of(context);
+    final textColor = color == null || color == Colors.transparent
+        ? colors.text
+        : color.computeLuminance() > .179
+            ? Colors.black
+            : Colors.white;
+    final textWidget = Flexible(
+      child: Text(
         translate(text),
         style: TextStyle(color: textColor),
         textAlign: TextAlign.center,
-      );
-    } else {
-      textWidget = Expanded(
-        child: Text(
-          translate(text),
-          style: TextStyle(color: textColor),
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
     final borderRadius = BorderRadius.circular(10.0);
-    final btn = Container(
-      height: 28,
+    final btn = Ink(
+      height: 36,
       decoration: BoxDecoration(
           color: color, borderRadius: borderRadius, border: border),
       child: InkWell(
@@ -1131,7 +1128,11 @@ class _CmControlPanel extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Offstage(offstage: icon == null, child: icon).marginOnly(right: 5),
+            if (icon != null)
+              IconTheme.merge(
+                data: IconThemeData(color: textColor),
+                child: icon,
+              ).marginOnly(right: 5),
             textWidget,
           ],
         ),
@@ -1362,7 +1363,9 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
                                               barRadius: Radius.circular(15),
                                               percent: item.finishedSize /
                                                   item.totalSize,
-                                              progressColor: MyTheme.accent,
+                                              progressColor:
+                                                  YesDeskColors.of(context)
+                                                      .selected,
                                               backgroundColor:
                                                   Theme.of(context).hoverColor,
                                               lineHeight:

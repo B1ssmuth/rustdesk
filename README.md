@@ -4,6 +4,8 @@
 
 YES Desk is a corporate remote support workspace built on the RustDesk engine. It brings quick connect, device inventory, address books and incoming support into one desktop application. Windows x64 is the primary distribution target.
 
+For Windows installation, migration from older builds and rollback, see the [YES Desk Windows installation guide](docs/YESDESK-WINDOWS-INSTALLATION.md).
+
 ## Downloads and support
 
 Use the official YES Desk repository for builds and source. For a branch under review, download the Windows x64 EXE and MSI from the **Full Flutter CI** run. Reports about the client belong in the project issue tracker. Keep device IDs, keys, account details and internal deployment information out of public issues.

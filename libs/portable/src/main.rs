@@ -17,6 +17,9 @@ const APP_METADATA: &[u8] = include_bytes!("../app_metadata.toml");
 const APP_METADATA: &[u8] = &[];
 const APP_METADATA_CONFIG: &str = "meta.toml";
 const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
+#[cfg(windows)]
+const APP_PREFIX: &str = "YES Desk Portable";
+#[cfg(not(windows))]
 const APP_PREFIX: &str = "rustdesk";
 const APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
 #[cfg(windows)]
@@ -212,7 +215,7 @@ fn main() {
 
 #[cfg(windows)]
 mod win {
-    use std::{fs, os::windows::process::CommandExt, path::Path, process::Command};
+    use std::{fs, path::Path};
 
     // Used for privacy mode(magnifier impl).
     pub const RUNTIME_BROKER_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
@@ -231,11 +234,8 @@ mod win {
                 }
             }
         }
-        let _allow_err = Command::new("taskkill")
-            .args(&["/F", "/IM", "RuntimeBroker_rustdesk.exe"])
-            .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
-            .output();
-        let _allow_err = std::fs::copy(src, &format!("{}\\{}", dir.to_string_lossy(), tgt));
+        // The cache belongs to YES Desk. If the copy is in use, leave it in place.
+        let _ = fs::copy(src, target_file);
     }
 
     /// Check if the executable is a Quick Support version.

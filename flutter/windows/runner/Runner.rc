@@ -96,7 +96,7 @@ BEGIN
             VALUE "LegalCopyright", "Copyright (c) YES Apart, Purslane Ltd. and contributors. AGPL-3.0." "\0"
             VALUE "OriginalFilename", "YES_Desk.exe" "\0"
             VALUE "ProductName", "YES Desk" "\0"
-            VALUE "Comments", "YES Desk IT Workspace. Built on RustDesk." "\0"
+            VALUE "Comments", "YES Desk IT Workspace" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

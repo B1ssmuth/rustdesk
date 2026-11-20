@@ -318,7 +318,7 @@ class _PeersViewState extends State<_PeersView>
                 ? Obx(() {
                     if (peerCardUiType.value == PeerUiType.list) {
                       return Material(
-                        color: YesDeskColors.of(context).surface,
+                        color: Colors.transparent,
                         child: Column(children: [
                           YesDeskDeviceRow(
                             header: true,

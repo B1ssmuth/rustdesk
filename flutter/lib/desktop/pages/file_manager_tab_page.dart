@@ -115,7 +115,7 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
           controller: tabController,
           onWindowCloseButton: handleWindowCloseButton,
           tail: const AddButton(),
-          selectedBorderColor: MyTheme.accent,
+          selectedBorderColor: Theme.of(context).colorScheme.primary,
           labelGetter: DesktopTab.tablabelGetter,
         ));
     final tabWidget = isLinux

@@ -22,6 +22,8 @@ class YesDeskColors extends ThemeExtension<YesDeskColors> {
     required this.onAccent,
     required this.selected,
     required this.warning,
+    required this.online,
+    required this.offline,
     required this.error,
   });
 
@@ -35,35 +37,40 @@ class YesDeskColors extends ThemeExtension<YesDeskColors> {
   final Color onAccent;
   final Color selected;
   final Color warning;
+  final Color online;
+  final Color offline;
   final Color error;
 
-  // YES Apart global.css supplies the neutral surfaces and warm emphasis.
   static const light = YesDeskColors(
-    canvas: Color(0xFFF3F3F3),
+    canvas: Color(0xFFF5F5F5),
     surface: Color(0xFFFFFFFF),
-    raised: Color(0xFFD6D6D6),
-    outline: Color(0xFFCFC8C3),
-    text: Color(0xFF322D29),
-    muted: Color(0xFF575757),
-    accent: Color(0xFF4D4743),
+    raised: Color(0xFFEAEAEA),
+    outline: Color(0xFFD9D9D9),
+    text: Color(0xFF171717),
+    muted: Color(0xFF666666),
+    accent: Color(0xFF171717),
     onAccent: Color(0xFFFFFFFF),
-    selected: Color(0xFFF8E7DB),
-    warning: Color(0xFF4D4743),
-    error: Color(0xFF322D29),
+    selected: Color(0xFFEAEAEA),
+    warning: Color(0xFF805300),
+    error: Color(0xFFA72727),
+    online: Color(0xFF136237),
+    offline: Color(0xFFA72727),
   );
 
   static const dark = YesDeskColors(
-    canvas: Color(0xFF322D29),
-    surface: Color(0xFF4D4743),
-    raised: Color(0xFF575757),
-    outline: Color(0xFF918882),
-    text: Color(0xFFF3F3F3),
-    muted: Color(0xFFD6D6D6),
-    accent: Color(0xFFF8E7DB),
-    onAccent: Color(0xFF322D29),
-    selected: Color(0xFF575757),
-    warning: Color(0xFFF8E7DB),
-    error: Color(0xFFF3F3F3),
+    canvas: Color(0xFF101010),
+    surface: Color(0xFF1C1C1C),
+    raised: Color(0xFF292929),
+    outline: Color(0xFF363636),
+    text: Color(0xFFFFFFFF),
+    muted: Color(0xFFA3A3A3),
+    accent: Color(0xFFFFFFFF),
+    onAccent: Color(0xFF111111),
+    selected: Color(0xFF292929),
+    warning: Color(0xFFF7C66F),
+    error: Color(0xFFFFA0A0),
+    online: Color(0xFF79DCA7),
+    offline: Color(0xFFFFA0A0),
   );
 
   static YesDeskColors of(BuildContext context) =>
@@ -86,6 +93,8 @@ class YesDeskColors extends ThemeExtension<YesDeskColors> {
       onAccent: Color.lerp(onAccent, other.onAccent, t)!,
       selected: Color.lerp(selected, other.selected, t)!,
       warning: Color.lerp(warning, other.warning, t)!,
+      online: Color.lerp(online, other.online, t)!,
+      offline: Color.lerp(offline, other.offline, t)!,
       error: Color.lerp(error, other.error, t)!,
     );
   }
@@ -192,7 +201,11 @@ class YesDeskTheme extends StatelessWidget {
       focusColor: colors.selected,
       hoverColor: colors.raised,
       iconTheme: base.iconTheme.copyWith(color: colors.muted),
-      tabBarTheme: base.tabBarTheme.copyWith(labelColor: colors.muted),
+      tabBarTheme: base.tabBarTheme.copyWith(
+        labelColor: colors.text,
+        unselectedLabelColor: colors.muted,
+        indicatorColor: colors.accent,
+      ),
       textTheme: base.textTheme
           .apply(bodyColor: colors.text, displayColor: colors.text)
           .copyWith(

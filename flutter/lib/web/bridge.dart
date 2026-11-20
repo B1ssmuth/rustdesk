@@ -1527,7 +1527,11 @@ class RustdeskImpl {
     throw UnimplementedError("installRunWithoutInstall");
   }
 
-  Future<void> installInstallMe(
+  bool installHasBundledInstaller({dynamic hint}) {
+    throw UnimplementedError("installHasBundledInstaller");
+  }
+
+  Future<String> installInstallMe(
       {required String options, required String path, dynamic hint}) {
     throw UnimplementedError("installInstallMe");
   }
@@ -2031,7 +2035,9 @@ class RustdeskImpl {
   }
 
   String mainResolveAvatarUrl({required String avatar, dynamic hint}) {
-    return js.context.callMethod('getByName', ['resolve_avatar_url', avatar])?.toString() ?? avatar;
+    return js.context.callMethod(
+            'getByName', ['resolve_avatar_url', avatar])?.toString() ??
+        avatar;
   }
 
   void dispose() {}
