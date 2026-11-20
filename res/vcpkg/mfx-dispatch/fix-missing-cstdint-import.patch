@@ -1,0 +1,11 @@
+Fix building with GCC 13 by including the header for uint8_t.
+Upstream commit d6241243f85a0d947bdfe813006686a930edef24 by Tomasz Kłoczko.
+https://github.com/lu-zero/mfx_dispatch/commit/d6241243f85a0d947bdfe813006686a930edef24
+License: BSD-3-Clause, provided by the upstream source package.
+
+diff --git a/src/mfxparser.cpp b/src/mfxparser.cpp
+--- a/src/mfxparser.cpp
++++ b/src/mfxparser.cpp
+@@ -26 +26,2 @@
++#include <cstdint>
+ #include <list>
