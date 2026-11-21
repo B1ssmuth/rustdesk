@@ -46,6 +46,8 @@ import '../common/widgets/dialog.dart';
 import 'input_model.dart';
 import 'platform_model.dart';
 import 'package:flutter_hbb/utils/scale.dart';
+import 'package:flutter_hbb/yesdesk/remote/session_metrics.dart';
+import 'package:flutter_hbb/yesdesk/remote/session_state.dart';
 
 import 'package:flutter_hbb/generated_bridge.dart'
     if (dart.library.html) 'package:flutter_hbb/web/bridge.dart';
@@ -125,6 +127,32 @@ class FfiModel with ChangeNotifier {
   bool _showMyCursor = false;
   WeakReference<FFI> parent;
   late final SessionID sessionId;
+
+  final desktopRecovery = RemoteSessionRecovery.ready.obs;
+
+  bool get desktopSessionActive =>
+      pi.isSet.value &&
+      !waitForFirstImage.value &&
+      desktopRecovery.value == RemoteSessionRecovery.ready &&
+      parent.target?.closed == false;
+
+  RemoteSessionPermissions get desktopSessionPermissions =>
+      RemoteSessionPermissions(
+        active: desktopSessionActive,
+        viewOnly: viewOnly,
+        keyboard: keyboard,
+        clipboard: permissions['clipboard'] != false,
+        files: permissions['file'] != false,
+      );
+
+  void _markDesktopConnectionInterrupted() {
+    final ffi = parent.target;
+    if (!isDesktop || ffi == null || ffi.connType != ConnType.defaultConn) {
+      return;
+    }
+    desktopRecovery.value = RemoteSessionRecovery.awaitingPeer;
+    ffi.qualityMonitorModel.resetSamples();
+  }
 
   RxBool waitForImageDialogShow = true.obs;
   Timer? waitForImageTimer;
@@ -894,6 +922,10 @@ class FfiModel with ChangeNotifier {
     final text = evt['text'];
     final link = evt['link'];
 
+    if (title == 'Connection Error' || type == 'restarting') {
+      _markDesktopConnectionInterrupted();
+    }
+
     // Disable relative mouse mode on any error-type message to ensure cursor is released.
     // This includes connection errors, session-ending messages, elevation errors, etc.
     // Safety: releasing pointer lock on errors prevents the user from being stuck.
@@ -1056,6 +1088,10 @@ class FfiModel with ChangeNotifier {
 
   void reconnect(OverlayDialogManager dialogManager, SessionID sessionId,
       bool forceRelay) {
+    // A manual retry replaces the pending automatic retry.
+    _timer?.cancel();
+    _timer = null;
+    _markDesktopConnectionInterrupted();
     // Disable relative mouse mode before reconnecting to ensure cursor is released.
     parent.target?.inputModel.setRelativeMouseMode(false);
     bind.sessionReconnect(sessionId: sessionId, forceRelay: forceRelay);
@@ -1374,6 +1410,7 @@ class FfiModel with ChangeNotifier {
       if (displays.isNotEmpty) {
         _reconnects = 1;
         _offlineReconnectStartTime = null;
+        desktopRecovery.value = desktopRecovery.value.onPeerInfo();
         waitForFirstImage.value = true;
         isRefreshing = false;
       }
@@ -3470,21 +3507,12 @@ class CursorModel with ChangeNotifier {
   }
 }
 
-class QualityMonitorData {
-  String? speed;
-  String? fps;
-  String? delay;
-  String? targetBitrate;
-  String? codecFormat;
-  String? chroma;
-}
-
 class QualityMonitorModel with ChangeNotifier {
   WeakReference<FFI> parent;
 
   QualityMonitorModel(this.parent);
   var _show = false;
-  final _data = QualityMonitorData();
+  var _data = QualityMonitorData();
 
   bool get show => _show;
   QualityMonitorData get data => _data;
@@ -3499,49 +3527,24 @@ class QualityMonitorModel with ChangeNotifier {
     }
   }
 
-  updateQualityStatus(Map<String, dynamic> evt) {
+  void resetSamples() {
+    _data = QualityMonitorData();
+    notifyListeners();
+  }
+
+  void updateQualityStatus(Map<String, dynamic> evt) {
     try {
-      if (evt.containsKey('speed') && (evt['speed'] as String).isNotEmpty) {
-        _data.speed = evt['speed'];
-      }
-      if (evt.containsKey('fps') && (evt['fps'] as String).isNotEmpty) {
-        final fps = jsonDecode(evt['fps']) as Map<String, dynamic>;
-        final pi = parent.target?.ffiModel.pi;
-        if (pi != null) {
-          final currentDisplay = pi.currentDisplay;
-          if (currentDisplay != kAllDisplayValue) {
-            final fps2 = fps[currentDisplay.toString()];
-            if (fps2 != null) {
-              _data.fps = fps2.toString();
-            }
-          } else if (fps.isNotEmpty) {
-            final fpsList = [];
-            for (var i = 0; i < pi.displays.length; i++) {
-              fpsList.add((fps[i.toString()] ?? 0).toString());
-            }
-            _data.fps = fpsList.join(' ');
-          }
-        } else {
-          _data.fps = null;
-        }
-      }
-      if (evt.containsKey('delay') && (evt['delay'] as String).isNotEmpty) {
-        _data.delay = evt['delay'];
-      }
-      if (evt.containsKey('target_bitrate') &&
-          (evt['target_bitrate'] as String).isNotEmpty) {
-        _data.targetBitrate = evt['target_bitrate'];
-      }
-      if (evt.containsKey('codec_format') &&
-          (evt['codec_format'] as String).isNotEmpty) {
-        _data.codecFormat = evt['codec_format'];
-      }
-      if (evt.containsKey('chroma') && (evt['chroma'] as String).isNotEmpty) {
-        _data.chroma = evt['chroma'];
-      }
+      final pi = parent.target?.ffiModel.pi;
+      _data.update(evt);
+      final display = pi?.currentDisplay;
+      _data.fps = display == null
+          ? null
+          : display == kAllDisplayValue
+              ? _data.fpsForDisplays(pi!.displays.length)
+              : _data.fpsForDisplay(display);
       notifyListeners();
     } catch (e) {
-      //
+      debugPrint('Invalid quality status: $e');
     }
   }
 }
@@ -3825,6 +3828,7 @@ class FFI {
         if (message is EventToUI_Event) {
           if (message.field0 == "close") {
             closed = true;
+            ffiModel._markDesktopConnectionInterrupted();
             debugPrint('Exit session event loop');
             return;
           }
@@ -3872,6 +3876,10 @@ class FFI {
   }
 
   void onEvent2UIRgba() async {
+    final recovery = ffiModel.desktopRecovery;
+    // A queued frame from the previous connection cannot complete recovery.
+    if (recovery.value == RemoteSessionRecovery.awaitingPeer) return;
+    recovery.value = recovery.value.onFrame();
     if (ffiModel.waitForImageDialogShow.isTrue) {
       ffiModel.waitForImageDialogShow.value = false;
       ffiModel.waitForImageTimer?.cancel();
