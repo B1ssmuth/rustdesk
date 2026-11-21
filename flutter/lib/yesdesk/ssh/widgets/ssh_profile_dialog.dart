@@ -92,6 +92,7 @@ class _SshProfileDialogState extends State<SshProfileDialog> {
           auth: _auth,
           palette: _palette,
           favorite: _favorite,
+          filesOnly: old?.filesOnly ?? false,
           secretRef: keepSecret ? old.secretRef : null,
         ));
   }
