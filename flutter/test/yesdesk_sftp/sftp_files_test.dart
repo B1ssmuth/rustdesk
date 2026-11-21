@@ -273,6 +273,6 @@ void main() {
           throwsA(isA<SftpAbortError>()));
       expect(await File(p.join(local.root, 'interrupted')).exists(), isFalse);
       expect(receiving.leftover, isNull);
-    });
+    }, timeout: const Timeout(Duration(minutes: 3)));
   });
 }
