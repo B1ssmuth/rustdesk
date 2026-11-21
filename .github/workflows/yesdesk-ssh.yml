@@ -1,4 +1,4 @@
-name: YES Desk SSH
+name: YES Desk SSH and SFTP
 
 on:
   workflow_dispatch:
@@ -11,13 +11,15 @@ on:
       - 'flutter/third_party/dartssh2/**'
       - 'flutter/pubspec.*'
       - 'scripts/test-yesdesk-ssh-openssh.sh'
+      - 'scripts/test-yesdesk-sftp-openssh.sh'
+      - 'scripts/fixtures/yesdesk-sftp/**'
 
 permissions:
   contents: read
 
 jobs:
   ssh:
-    name: SSH tests (${{ matrix.os }})
+    name: SSH and SFTP tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -35,11 +37,11 @@ jobs:
         run: flutter pub get --enforce-lockfile
       - name: Check formatting
         working-directory: flutter
-        run: dart format --output=none --set-exit-if-changed lib/yesdesk/ssh lib/common/widgets/peer_tab_page.dart test/yesdesk_ssh
+        run: dart format --output=none --set-exit-if-changed lib/yesdesk/ssh lib/common/widgets/peer_tab_page.dart test/yesdesk_ssh test/yesdesk_sftp
       - name: Analyze SSH and workspace navigation
         working-directory: flutter
         run: |
-          flutter analyze --no-pub lib/yesdesk/ssh test/yesdesk_ssh
+          flutter analyze --no-pub lib/yesdesk/ssh test/yesdesk_ssh test/yesdesk_sftp
           flutter analyze --no-pub --no-fatal-infos lib/common/widgets/peer_tab_page.dart
       - name: Run units, widgets and workspace regressions
         working-directory: flutter
@@ -52,3 +54,6 @@ jobs:
       - name: Test direct SSH against isolated OpenSSH
         if: runner.os == 'Linux'
         run: scripts/test-yesdesk-ssh-openssh.sh
+      - name: Test SFTP against isolated OpenSSH containers
+        if: runner.os == 'Linux'
+        run: scripts/test-yesdesk-sftp-openssh.sh
