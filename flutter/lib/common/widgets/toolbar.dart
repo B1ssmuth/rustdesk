@@ -87,7 +87,27 @@ handleOsPasswordAction(
   }
 }
 
-List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
+void connectWithSessionToken(
+  BuildContext context,
+  String id,
+  FFI ffi, {
+  bool isFileTransfer = false,
+  bool isViewCamera = false,
+  bool isTcpTunneling = false,
+  bool isTerminal = false,
+}) {
+  // Sessions established through remote approval may not have a token.
+  final connToken = bind.sessionGetConnToken(sessionId: ffi.sessionId);
+  connect(context, id,
+      isFileTransfer: isFileTransfer,
+      isViewCamera: isViewCamera,
+      isTerminal: isTerminal,
+      isTcpTunneling: isTcpTunneling,
+      connToken: connToken);
+}
+
+List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi,
+    {bool showSessionShortcuts = true}) {
   final ffiModel = ffi.ffiModel;
   final pi = ffiModel.pi;
   final perms = ffiModel.permissions;
@@ -136,7 +156,8 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
     );
   }
   // paste
-  if (isDefaultConn &&
+  if (showSessionShortcuts &&
+      isDefaultConn &&
       pi.platform != kPeerPlatformAndroid &&
       perms['keyboard'] != false) {
     v.add(TTextMenu(
@@ -156,43 +177,30 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
         onPressed: () => ffi.cursorModel.reset()));
   }
 
-  // https://github.com/rustdesk/rustdesk/pull/9731
-  // Does not work for connection established by "accept".
-  connectWithToken(
-      {bool isFileTransfer = false,
-      bool isViewCamera = false,
-      bool isTcpTunneling = false,
-      bool isTerminal = false}) {
-    final connToken = bind.sessionGetConnToken(sessionId: ffi.sessionId);
-    connect(context, id,
-        isFileTransfer: isFileTransfer,
-        isViewCamera: isViewCamera,
-        isTerminal: isTerminal,
-        isTcpTunneling: isTcpTunneling,
-        connToken: connToken);
-  }
-
   if (isDefaultConn && isDesktop) {
-    v.add(
-      TTextMenu(
+    v.addAll([
+      if (showSessionShortcuts)
+        TTextMenu(
           child: Text(translate('Transfer file')),
-          onPressed: () => connectWithToken(isFileTransfer: true)),
-    );
-    v.add(
+          onPressed: () =>
+              connectWithSessionToken(context, id, ffi, isFileTransfer: true),
+        ),
       TTextMenu(
-          child: Text(translate('View camera')),
-          onPressed: () => connectWithToken(isViewCamera: true)),
-    );
-    v.add(
+        child: Text(translate('View camera')),
+        onPressed: () =>
+            connectWithSessionToken(context, id, ffi, isViewCamera: true),
+      ),
       TTextMenu(
-          child: Text('${translate('Terminal')} (beta)'),
-          onPressed: () => connectWithToken(isTerminal: true)),
-    );
-    v.add(
+        child: Text('${translate('Terminal')} (beta)'),
+        onPressed: () =>
+            connectWithSessionToken(context, id, ffi, isTerminal: true),
+      ),
       TTextMenu(
-          child: Text(translate('TCP tunneling')),
-          onPressed: () => connectWithToken(isTcpTunneling: true)),
-    );
+        child: Text(translate('TCP tunneling')),
+        onPressed: () =>
+            connectWithSessionToken(context, id, ffi, isTcpTunneling: true),
+      ),
+    ]);
   }
   // note
   if (isDefaultConn && !bind.isDisableAccount()) {
@@ -222,7 +230,8 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
     v.add(TTextMenu(child: Offstage(), onPressed: () {}, divider: true));
   }
   // ctrlAltDel
-  if (isDefaultConn &&
+  if (showSessionShortcuts &&
+      isDefaultConn &&
       !ffiModel.viewOnly &&
       ffiModel.keyboard &&
       (pi.platform == kPeerPlatformLinux || pi.sasEnabled)) {
@@ -593,7 +602,8 @@ Future<List<TToggleMenu>> toolbarCursor(
 }
 
 Future<List<TToggleMenu>> toolbarDisplayToggle(
-    BuildContext context, String id, FFI ffi) async {
+    BuildContext context, String id, FFI ffi,
+    {bool includeClipboardToggle = true}) async {
   List<TToggleMenu> v = [];
   final ffiModel = ffi.ffiModel;
   final pi = ffiModel.pi;
@@ -652,7 +662,10 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         child: Text(translate('Enable file copy and paste'))));
   }
   // disable clipboard
-  if (isDefaultConn && ffiModel.keyboard && perms['clipboard'] != false) {
+  if (includeClipboardToggle &&
+      isDefaultConn &&
+      ffiModel.keyboard &&
+      perms['clipboard'] != false) {
     final enabled = !ffiModel.viewOnly;
     final option = 'disable-clipboard';
     var value =

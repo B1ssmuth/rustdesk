@@ -121,7 +121,7 @@ class DesktopTabController {
     }
     try {
       // tabPage has not been initialized, call `onSelected` at the end of initState
-      jumpTo(toIndex, callOnSelected: false);
+      jumpTo(toIndex, callOnSelected: index >= 0);
     } catch (e) {
       // call before binding controller will throw
       debugPrint("Failed to jumpTo: $e");
@@ -134,15 +134,17 @@ class DesktopTabController {
     if (index < 0 || index > len - 1) return;
     final key = state.value.tabs[index].key;
     final currentSelected = state.value.selected;
-    int toIndex = 0;
-    if (index == len - 1) {
-      toIndex = max(0, currentSelected - 1);
-    } else if (index < len - 1 && index < currentSelected) {
-      toIndex = max(0, currentSelected - 1);
-    }
     state.value.tabs.removeAt(index);
-    state.value.scrollController.itemCount = state.value.tabs.length;
-    jumpTo(toIndex);
+    state.value.scrollController.itemCount = len - 1;
+    if (len == 1) {
+      state.value.selected = 0;
+      state.refresh();
+    } else {
+      // Keep the current session selected when a background tab closes.
+      final shifted =
+          index < currentSelected ? currentSelected - 1 : currentSelected;
+      jumpTo(min(shifted, len - 2));
+    }
     onRemoved?.call(index, key);
   }
 
@@ -156,6 +158,7 @@ class DesktopTabController {
       if (val != null) {
         val.selected = index;
         Future.delayed(Duration(milliseconds: 100), (() {
+          if (val.selected != index || index >= val.tabs.length) return;
           if (val.pageController.hasClients) {
             val.pageController.jumpToPage(index);
           }

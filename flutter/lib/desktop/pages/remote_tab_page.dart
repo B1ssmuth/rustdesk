@@ -131,8 +131,9 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = YesDeskColors.of(context);
     final child = Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: colors.canvas,
       body: DesktopTab(
         controller: tabController,
         onWindowCloseButton: handleWindowCloseButton,
@@ -143,7 +144,10 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
             const AddButton(),
           ],
         ),
-        selectedBorderColor: Theme.of(context).colorScheme.primary,
+        selectedTabBackgroundColor: colors.selected,
+        unSelectedTabBackgroundColor: colors.canvas,
+        selectedBorderColor: colors.accent,
+        maxLabelWidth: 168,
         pageViewBuilder: (pageView) => pageView,
         labelGetter: DesktopTab.tablabelGetter,
         tabBuilder: (key, icon, label, themeConf) => Obx(() {
@@ -258,11 +262,15 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       MenuEntryButton<String>(
         childBuilder: (TextStyle? style) => Obx(() => Text(
               translate(
-                  toolbarState.hide.isTrue ? 'Show Toolbar' : 'Hide Toolbar'),
+                  toolbarState.concealed ? 'Show Toolbar' : 'Hide Toolbar'),
               style: style,
             )),
         proc: () {
-          toolbarState.switchHide(sessionId);
+          if (toolbarState.concealed) {
+            toolbarState.reveal(sessionId);
+          } else {
+            toolbarState.switchHide(sessionId);
+          }
           cancelFunc();
         },
         padding: padding,
@@ -287,7 +295,9 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       menu.insert(1, splitAction);
     }
 
-    if (perms['restart'] != false &&
+    if (ffi.ffiModel.desktopSessionActive &&
+        !ffi.ffiModel.viewOnly &&
+        perms['restart'] != false &&
         (pi.platform == kPeerPlatformLinux ||
             pi.platform == kPeerPlatformWindows ||
             pi.platform == kPeerPlatformMacOS)) {
@@ -304,13 +314,14 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       ));
     }
 
-    if (perms['keyboard'] != false && !ffi.ffiModel.viewOnly) {
+    bool canSendKeys() => ffi.ffiModel.desktopSessionPermissions.canSendKeys;
+    if (canSendKeys()) {
       menu.add(RemoteMenuEntry.insertLock(sessionId, padding,
-          dismissFunc: cancelFunc));
+          canSendKeys: canSendKeys, dismissFunc: cancelFunc));
 
       if (pi.platform == kPeerPlatformLinux || pi.sasEnabled) {
         menu.add(RemoteMenuEntry.insertCtrlAltDel(sessionId, padding,
-            dismissFunc: cancelFunc));
+            canSendKeys: canSendKeys, dismissFunc: cancelFunc));
       }
     }
 
@@ -422,8 +433,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       RemoteCountState.find().value = tabController.length;
 
   Future<dynamic> _remoteMethodHandler(call, fromWindowId) async {
-    debugPrint(
-        "[Remote Page] call ${call.method} with args ${call.arguments} from window $fromWindowId");
+    debugPrint("[Remote Page] call ${call.method} from window $fromWindowId");
 
     dynamic returnValue;
     // for simplify, just replace connectionId

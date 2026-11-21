@@ -172,7 +172,13 @@ class _RemotePageState extends State<RemotePage>
     _blockableOverlayState.applyFfi(_ffi);
     // Call onSelected in post frame callback, since we cannot guarantee that the callback will not call setState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.tabController?.onSelected?.call(widget.id);
+      final tabs = widget.tabController?.state.value;
+      if (mounted &&
+          tabs != null &&
+          tabs.tabs.isNotEmpty &&
+          tabs.selectedTabInfo.key == widget.id) {
+        widget.tabController?.onSelected?.call(widget.id);
+      }
     });
 
     // Register callback to cancel debounce timer when relative mouse mode is disabled
@@ -353,7 +359,7 @@ class _RemotePageState extends State<RemotePage>
       );
 
   Widget buildBody(BuildContext context) {
-    remoteToolbar(BuildContext context) => RemoteToolbar(
+    legacyToolbar(BuildContext context) => RemoteToolbar(
           id: widget.id,
           ffi: _ffi,
           state: widget.toolbarState,
@@ -428,9 +434,19 @@ class _RemotePageState extends State<RemotePage>
                   ? const Offstage()
                   : _ffi.ffiModel.pi.isSet.isTrue
                       ? Overlay(initialEntries: [
-                          OverlayEntry(builder: remoteToolbar)
+                          OverlayEntry(
+                            builder: isDesktop
+                                ? (_) => YesDeskRemoteToolbar(
+                                      ffi: _ffi,
+                                      state: widget.toolbarState,
+                                      setRemoteState: setState,
+                                    )
+                                : legacyToolbar,
+                          )
                         ])
-                      : remoteToolbar(context)),
+                      : isDesktop
+                          ? const Offstage()
+                          : legacyToolbar(context)),
               _ffi.ffiModel.pi.isSet.isFalse ? emptyOverlay() : Offstage(),
             ],
           ),
@@ -618,7 +634,8 @@ class _RemotePageState extends State<RemotePage>
     }
     paints.add(
       Positioned(
-        top: 10,
+        top: isDesktop ? null : 10,
+        bottom: isDesktop ? 10 : null,
         right: 10,
         child: _buildRawTouchAndPointerRegion(
             QualityMonitor(_ffi.qualityMonitorModel), null, null),

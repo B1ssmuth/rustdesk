@@ -27,6 +27,9 @@ import './popup_menu.dart';
 import './kb_layout_type_chooser.dart';
 import 'package:flutter_hbb/utils/scale.dart';
 import 'package:flutter_hbb/common/widgets/custom_scale_base.dart';
+import 'package:flutter_hbb/yesdesk/remote/session_bar.dart';
+import 'package:flutter_hbb/yesdesk/remote/session_state.dart';
+import 'package:flutter_hbb/yesdesk/theme.dart';
 
 class ToolbarState {
   late RxBool _pin;
@@ -90,6 +93,22 @@ class ToolbarState {
   switchHide(SessionID sessionId) async {
     bind.sessionToggleOption(sessionId: sessionId, value: kOptionHideToolbar);
     hide.value = !hide.value;
+  }
+
+  bool get concealed => hide.value || collapse.value;
+
+  void reveal(SessionID sessionId) {
+    if (hide.value) switchHide(sessionId);
+    // Auto-collapse from an older toolbar may not have been persisted.
+    if (collapse.value) {
+      final saved = bind.sessionGetToggleOptionSync(
+          sessionId: sessionId, arg: kOptionCollapseToolbar);
+      if (saved) {
+        switchCollapse(sessionId);
+      } else {
+        collapse.value = false;
+      }
+    }
   }
 
   switchPin() async {
@@ -181,6 +200,7 @@ class RemoteMenuEntry {
   static MenuEntryButton<String> insertLock(
     SessionID sessionId,
     EdgeInsets? padding, {
+    required bool Function() canSendKeys,
     DismissFunc? dismissFunc,
     DismissCallback? dismissCallback,
   }) {
@@ -190,7 +210,7 @@ class RemoteMenuEntry {
         style: style,
       ),
       proc: () {
-        bind.sessionLockScreen(sessionId: sessionId);
+        if (canSendKeys()) bind.sessionLockScreen(sessionId: sessionId);
         if (dismissFunc != null) {
           dismissFunc();
         }
@@ -204,6 +224,7 @@ class RemoteMenuEntry {
   static insertCtrlAltDel(
     SessionID sessionId,
     EdgeInsets? padding, {
+    required bool Function() canSendKeys,
     DismissFunc? dismissFunc,
     DismissCallback? dismissCallback,
   }) {
@@ -213,7 +234,7 @@ class RemoteMenuEntry {
         style: style,
       ),
       proc: () {
-        bind.sessionCtrlAltDel(sessionId: sessionId);
+        if (canSendKeys()) bind.sessionCtrlAltDel(sessionId: sessionId);
         if (dismissFunc != null) {
           dismissFunc();
         }
@@ -469,6 +490,266 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
   }
 }
 
+class YesDeskRemoteToolbar extends StatefulWidget {
+  const YesDeskRemoteToolbar({
+    super.key,
+    required this.ffi,
+    required this.state,
+    required this.setRemoteState,
+  });
+
+  final FFI ffi;
+  final ToolbarState state;
+  final Function(VoidCallback) setRemoteState;
+
+  @override
+  State<YesDeskRemoteToolbar> createState() => _YesDeskRemoteToolbarState();
+}
+
+class _YesDeskRemoteToolbarState extends State<YesDeskRemoteToolbar> {
+  FFI get ffi => widget.ffi;
+  FfiModel get model => ffi.ffiModel;
+  SessionID get sessionId => ffi.sessionId;
+  ToolbarState get toolbar => widget.state;
+
+  RemoteSessionPermissions get permissions => model.desktopSessionPermissions;
+
+  bool _changingViewMode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) toolbar.init(sessionId);
+    });
+  }
+
+  Future<void> _toggleViewMode() async {
+    if (_changingViewMode || !permissions.active || !model.keyboard) return;
+    setState(() => _changingViewMode = true);
+    try {
+      await _setViewMode(ffi.id, ffi, !model.viewOnly);
+    } finally {
+      if (mounted) setState(() => _changingViewMode = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Rebuild for asynchronous permissions and view-mode changes.
+    context.watch<FfiModel>();
+    return Obx(() {
+      final fullscreen = stateGlobal.fullscreen.value;
+      final fullscreenAction = SessionBarAction(
+        label: translate(fullscreen ? 'Exit Fullscreen' : 'Fullscreen'),
+        icon: fullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+        onPressed: () => stateGlobal.setFullscreen(!fullscreen),
+      );
+      final ready = toolbar.initialized.value;
+      final hidden = !ready || toolbar.concealed;
+      final allowed = permissions;
+      final compact = hidden || !allowed.active;
+      final recovery = model.desktopRecovery.value;
+      final theme = YesDeskTheme.apply(Theme.of(context));
+      return Align(
+        alignment: Alignment.topCenter,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+          child: Theme(
+            data: theme,
+            child: YesDeskSessionBar(
+              status: allowed.active && !hidden
+                  ? _SessionMetrics(id: ffi.id, ffi: ffi)
+                  : recovery == RemoteSessionRecovery.ready
+                      ? null
+                      : SessionBarStatus(
+                          label: translate(
+                            recovery == RemoteSessionRecovery.awaitingPeer
+                                ? 'Disconnected'
+                                : 'Connecting...',
+                          ),
+                        ),
+              controls: compact ? const [] : _controls(context, allowed),
+              windowActions: [
+                fullscreenAction,
+                if (ready && hidden)
+                  SessionBarAction(
+                    label: translate('Show Toolbar'),
+                    icon: Icons.keyboard_arrow_down,
+                    onPressed: () => toolbar.reveal(sessionId),
+                  ),
+                if (!compact) ...[
+                  SessionBarAction(
+                    label: translate('Hide Toolbar'),
+                    icon: Icons.keyboard_arrow_up,
+                    onPressed: () => toolbar.switchHide(sessionId),
+                  ),
+                  SessionBarAction(
+                    label: translate('Close'),
+                    icon: Icons.close,
+                    onPressed: () => clientClose(sessionId, ffi),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  List<Widget> _controls(
+      BuildContext context, RemoteSessionPermissions allowed) {
+    final id = ffi.id;
+    final peer = model.pi;
+    final supportsViewMode = versionCmp(peer.version, '1.2.0') >= 0;
+    return [
+      if (PrivacyModeState.find(id).isEmpty && peer.displaysCount.value > 1)
+        _MonitorMenu(
+            id: id,
+            ffi: ffi,
+            setRemoteState: widget.setRemoteState,
+            yesDesk: true),
+      _DisplayMenu(
+        id: id,
+        ffi: ffi,
+        state: toolbar,
+        setFullscreen: stateGlobal.setFullscreen,
+        yesDesk: true,
+      ),
+      if (allowed.canSendKeys) _KeyboardMenu(id: id, ffi: ffi, yesDesk: true),
+      if (allowed.canUseClipboard) _clipboardMenu(),
+      if (allowed.canTransferFiles)
+        SessionBarAction(
+          label: translate('Transfer file'),
+          icon: Icons.folder_outlined,
+          onPressed: () {
+            if (permissions.canTransferFiles) {
+              connectWithSessionToken(context, id, ffi, isFileTransfer: true);
+            }
+          },
+        ),
+      if (supportsViewMode && (model.keyboard || model.viewOnly))
+        SessionBarAction(
+          label: translate('View Mode'),
+          icon: model.viewOnly ? Icons.visibility : Icons.visibility_outlined,
+          selected: model.viewOnly,
+          showLabel: model.viewOnly,
+          onPressed:
+              model.keyboard && !_changingViewMode ? _toggleViewMode : null,
+        ),
+      if (!model.viewOnly) ...[
+        _ControlMenu(id: id, ffi: ffi, state: toolbar, yesDesk: true),
+        if (allowed.canSendKeys) _MobileActionMenu(ffi: ffi),
+      ],
+      _ChatMenu(id: id, ffi: ffi),
+      _VoiceCallMenu(id: id, ffi: ffi),
+      _RecordMenu(),
+    ];
+  }
+
+  Widget _clipboardMenu() {
+    final enabled = !bind.sessionGetToggleOptionSync(
+        sessionId: sessionId, arg: 'disable-clipboard');
+    return _IconSubmenuButton(
+      tooltip: 'Clipboard',
+      actionIcon: Icons.content_paste,
+      color: _ToolbarTheme.blueColor,
+      hoverColor: _ToolbarTheme.hoverBlueColor,
+      ffi: ffi,
+      menuChildrenGetter: (_) => [
+        CkbMenuButton(
+          value: !enabled,
+          ffi: ffi,
+          child: Text(translate('Disable clipboard')),
+          onChanged: (value) async {
+            if (value == null || !permissions.canUseClipboard) return;
+            await bind.sessionToggleOption(
+                sessionId: sessionId, value: 'disable-clipboard');
+            if (mounted) setState(() {});
+          },
+        ),
+        if (!model.isPeerAndroid && enabled)
+          MenuButton(
+            ffi: ffi,
+            child: Text(translate('Send clipboard keystrokes')),
+            onPressed: () async {
+              if (!permissions.canUseClipboard) return;
+              final text =
+                  (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+              if (!mounted ||
+                  text == null ||
+                  text.isEmpty ||
+                  !permissions.canUseClipboard ||
+                  bind.sessionGetToggleOptionSync(
+                      sessionId: sessionId, arg: 'disable-clipboard')) {
+                return;
+              }
+              bind.sessionInputString(sessionId: sessionId, value: text);
+            },
+          ),
+      ],
+    );
+  }
+}
+
+class _SessionMetrics extends StatelessWidget {
+  const _SessionMetrics({required this.id, required this.ffi});
+
+  final String id;
+  final FFI ffi;
+
+  @override
+  Widget build(BuildContext context) {
+    final quality = ffi.qualityMonitorModel;
+    return Obx(() {
+      final display = CurrentDisplayState.find(id).value;
+      final displayCount = ffi.ffiModel.pi.displaysCount.value;
+      final connectionType = ConnectionTypeState.find(id);
+      final label = connectionType.isValid()
+          ? getConnectionText(
+              connectionType.secure.value == ConnectionType.strSecure,
+              connectionType.direct.value == ConnectionType.strDirect,
+              connectionType.stream_type.value,
+            )
+          : translate('Connected');
+      return ListenableBuilder(
+        listenable: quality,
+        builder: (context, _) {
+          final data = quality.data;
+          final fps = display == kAllDisplayValue
+              ? data.fpsForDisplays(displayCount)
+              : data.fpsForDisplay(display);
+          return SessionBarStatus(
+            label: label,
+            metrics: [
+              if (data.delay != null) '${data.delay} ms',
+              if (fps != null) '$fps FPS',
+              if (data.speed != null) data.speed!,
+            ],
+            details: [
+              if (data.codecFormat != null) data.codecFormat!,
+              if (data.targetBitrate != null)
+                '${translate('Target bitrate')}: ${data.targetBitrate} kbps',
+            ],
+          );
+        },
+      );
+    });
+  }
+}
+
+Future<void> _setViewMode(String id, FFI ffi, bool value) async {
+  await bind.sessionToggleOption(
+      sessionId: ffi.sessionId, value: kOptionToggleViewOnly);
+  final viewOnly = await bind.sessionGetToggleOption(
+      sessionId: ffi.sessionId, arg: kOptionToggleViewOnly);
+  ffi.ffiModel.setViewOnly(id, viewOnly ?? value);
+  final showMyCursor = await bind.sessionGetToggleOption(
+      sessionId: ffi.sessionId, arg: kOptionToggleShowMyCursor);
+  ffi.ffiModel.setShowMyCursor(showMyCursor ?? value);
+}
+
 class _PinMenu extends StatelessWidget {
   final ToolbarState state;
   const _PinMenu({Key? key, required this.state}) : super(key: key);
@@ -515,12 +796,14 @@ class _MobileActionMenu extends StatelessWidget {
 class _MonitorMenu extends StatelessWidget {
   final String id;
   final FFI ffi;
+  final bool yesDesk;
   final Function(VoidCallback) setRemoteState;
   const _MonitorMenu({
     Key? key,
     required this.id,
     required this.ffi,
     required this.setRemoteState,
+    this.yesDesk = false,
   }) : super(key: key);
 
   bool get showMonitorsToolbar =>
@@ -541,8 +824,9 @@ class _MonitorMenu extends StatelessWidget {
     return _IconSubmenuButton(
         tooltip: 'Select Monitor',
         icon: monitorsIcon,
+        actionIcon: yesDesk ? Icons.monitor_outlined : null,
         ffi: ffi,
-        width: width.value,
+        width: yesDesk ? null : width.value,
         color: _ToolbarTheme.blueColor,
         hoverColor: _ToolbarTheme.hoverBlueColor,
         menuStyle: MenuStyle(
@@ -746,9 +1030,14 @@ class _MonitorMenu extends StatelessWidget {
 class _ControlMenu extends StatelessWidget {
   final String id;
   final FFI ffi;
+  final bool yesDesk;
   final ToolbarState state;
   _ControlMenu(
-      {Key? key, required this.id, required this.ffi, required this.state})
+      {Key? key,
+      required this.id,
+      required this.ffi,
+      required this.state,
+      this.yesDesk = false})
       : super(key: key);
 
   @override
@@ -756,10 +1045,13 @@ class _ControlMenu extends StatelessWidget {
     return _IconSubmenuButton(
         tooltip: 'Control Actions',
         svg: "assets/actions.svg",
+        actionIcon: yesDesk ? Icons.more_horiz : null,
         color: _ToolbarTheme.blueColor,
         hoverColor: _ToolbarTheme.hoverBlueColor,
         ffi: ffi,
-        menuChildrenGetter: (_) => toolbarControls(context, id, ffi).map((e) {
+        menuChildrenGetter: (_) =>
+            toolbarControls(context, id, ffi, showSessionShortcuts: !yesDesk)
+                .map((e) {
               if (e.divider) {
                 return Divider();
               } else {
@@ -921,12 +1213,14 @@ class _DisplayMenu extends StatefulWidget {
   final ToolbarState state;
   final Function(bool) setFullscreen;
   final Widget pluginItem;
+  final bool yesDesk;
   _DisplayMenu(
       {Key? key,
       required this.id,
       required this.ffi,
       required this.state,
-      required this.setFullscreen})
+      required this.setFullscreen,
+      this.yesDesk = false})
       : pluginItem = LocationItem.createLocationItem(
           id,
           ffi,
@@ -973,19 +1267,38 @@ class _DisplayMenuState extends State<_DisplayMenu> {
     final colorScheme = Theme.of(context).colorScheme;
     _screenAdjustor.updateScreen();
     menuChildrenGetter(_IconSubmenuButtonState state) {
-      final menuChildren = <Widget>[
-        _screenAdjustor.adjustWindow(context),
+      final scaling = [
         viewStyle(customPercent: _customPercent),
         scrollStyle(state, colorScheme),
-        imageQuality(),
-        codec(),
-        if (ffi.connType == ConnType.defaultConn)
+      ];
+      final image = [imageQuality(), codec()];
+      final menuChildren = <Widget>[
+        _screenAdjustor.adjustWindow(context),
+        if (widget.yesDesk) ...[
+          _SubmenuButton(
+            ffi: ffi,
+            child: Text(translate('Scaling')),
+            menuChildren: scaling,
+          ),
+          _SubmenuButton(
+            ffi: ffi,
+            child: Text(translate('Image Quality')),
+            menuChildren: image,
+          ),
+        ] else ...[
+          ...scaling,
+          ...image,
+        ],
+        if (ffi.connType == ConnType.defaultConn &&
+            (!widget.yesDesk || !ffiModel.viewOnly))
           _ResolutionsMenu(
             id: widget.id,
             ffi: widget.ffi,
             screenAdjustor: _screenAdjustor,
           ),
-        if (showVirtualDisplayMenu(ffi) && ffi.connType == ConnType.defaultConn)
+        if (showVirtualDisplayMenu(ffi) &&
+            ffi.connType == ConnType.defaultConn &&
+            (!widget.yesDesk || !ffiModel.viewOnly))
           _SubmenuButton(
             ffi: widget.ffi,
             menuChildren: getVirtualDisplayMenuChildren(ffi, id, null),
@@ -998,6 +1311,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
       // privacy mode
       if (ffi.connType == ConnType.defaultConn &&
           ffiModel.keyboard &&
+          (!widget.yesDesk || !ffiModel.viewOnly) &&
           pi.features.privacyMode) {
         final privacyModeState = PrivacyModeState.find(id);
         final privacyModeList =
@@ -1033,6 +1347,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
     return _IconSubmenuButton(
       tooltip: 'Display Settings',
       svg: "assets/display.svg",
+      actionIcon: widget.yesDesk ? Icons.tune : null,
       ffi: widget.ffi,
       color: _ToolbarTheme.blueColor,
       hoverColor: _ToolbarTheme.hoverBlueColor,
@@ -1040,7 +1355,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
     );
   }
 
-  viewStyle({required RxInt customPercent}) {
+  Widget viewStyle({required RxInt customPercent}) {
     return futureBuilder(
         future: toolbarViewStyle(context, widget.id, widget.ffi),
         hasData: (data) {
@@ -1100,7 +1415,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
     });
   }
 
-  scrollStyle(_IconSubmenuButtonState state, ColorScheme colorScheme) {
+  Widget scrollStyle(_IconSubmenuButtonState state, ColorScheme colorScheme) {
     return futureBuilder(future: () async {
       final viewStyle =
           await bind.sessionGetViewStyle(sessionId: ffi.sessionId) ?? '';
@@ -1183,7 +1498,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
     });
   }
 
-  imageQuality() {
+  Widget imageQuality() {
     return futureBuilder(
         future: toolbarImageQuality(context, widget.id, widget.ffi),
         hasData: (data) {
@@ -1203,7 +1518,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
         });
   }
 
-  codec() {
+  Widget codec() {
     return futureBuilder(
         future: toolbarCodec(context, id, ffi),
         hasData: (data) {
@@ -1245,7 +1560,8 @@ class _DisplayMenuState extends State<_DisplayMenu> {
 
   toggles() {
     return futureBuilder(
-        future: toolbarDisplayToggle(context, id, ffi),
+        future: toolbarDisplayToggle(context, id, ffi,
+            includeClipboardToggle: !widget.yesDesk),
         hasData: (data) {
           final v = data as List<TToggleMenu>;
           if (v.isEmpty) return Offstage();
@@ -1753,10 +2069,12 @@ class _ResolutionsMenuState extends State<_ResolutionsMenu> {
 class _KeyboardMenu extends StatelessWidget {
   final String id;
   final FFI ffi;
+  final bool yesDesk;
   _KeyboardMenu({
     Key? key,
     required this.id,
     required this.ffi,
+    this.yesDesk = false,
   }) : super(key: key);
 
   PeerInfo get pi => ffi.ffiModel.pi;
@@ -1780,17 +2098,36 @@ class _KeyboardMenu extends StatelessWidget {
     }
 
     return _IconSubmenuButton(
-        tooltip: 'Keyboard Settings',
+        tooltip: yesDesk ? 'Keyboard' : 'Keyboard Settings',
+        actionIcon: yesDesk ? Icons.keyboard_outlined : null,
         svg: "assets/keyboard_mouse.svg",
         ffi: ffi,
         color: _ToolbarTheme.blueColor,
         hoverColor: _ToolbarTheme.hoverBlueColor,
         menuChildrenGetter: (_) => [
+              if (yesDesk) ...[
+                if (pi.platform == kPeerPlatformLinux || pi.sasEnabled)
+                  _specialKey('Insert Ctrl + Alt + Del',
+                      () => bind.sessionCtrlAltDel(sessionId: ffi.sessionId)),
+                _specialKey('Esc', () => ffi.inputModel.inputKey('VK_ESCAPE')),
+                _specialKey('Tab', () => ffi.inputModel.inputKey('VK_TAB')),
+                _specialKey('Del', () => ffi.inputModel.inputKey('VK_DELETE')),
+                _SubmenuButton(
+                  ffi: ffi,
+                  child: Text(translate('Function keys')),
+                  menuChildren: [
+                    for (var number = 1; number <= 12; number++)
+                      _specialKey('F$number',
+                          () => ffi.inputModel.inputKey('VK_F$number')),
+                  ],
+                ),
+                Divider(),
+              ],
               keyboardMode(),
               localKeyboardType(),
               inputSource(),
               Divider(),
-              viewMode(),
+              if (!yesDesk) viewMode(),
               if ([kPeerPlatformWindows, kPeerPlatformMacOS, kPeerPlatformLinux]
                   .contains(pi.platform))
                 showMyCursor(),
@@ -1799,6 +2136,18 @@ class _KeyboardMenu extends StatelessWidget {
               ...mouseSpeed(),
               ...mobileActions(),
             ]);
+  }
+
+  Widget _specialKey(String label, VoidCallback send) {
+    return MenuButton(
+      ffi: ffi,
+      child: Text(translate(label)),
+      onPressed: () {
+        if (ffi.ffiModel.desktopSessionPermissions.canSendKeys) {
+          send();
+        }
+      },
+    );
   }
 
   mouseSpeed() {
@@ -1955,14 +2304,7 @@ class _KeyboardMenu extends StatelessWidget {
         onChanged: enabled
             ? (value) async {
                 if (value == null) return;
-                await bind.sessionToggleOption(
-                    sessionId: ffi.sessionId, value: kOptionToggleViewOnly);
-                final viewOnly = await bind.sessionGetToggleOption(
-                    sessionId: ffi.sessionId, arg: kOptionToggleViewOnly);
-                ffiModel.setViewOnly(id, viewOnly ?? value);
-                final showMyCursor = await bind.sessionGetToggleOption(
-                    sessionId: ffi.sessionId, arg: kOptionToggleShowMyCursor);
-                ffiModel.setShowMyCursor(showMyCursor ?? value);
+                await _setViewMode(id, ffi, value);
               }
             : null,
         ffi: ffi,
@@ -2319,6 +2661,7 @@ class _IconSubmenuButton extends StatefulWidget {
   final String tooltip;
   final String? svg;
   final Widget? icon;
+  final IconData? actionIcon;
   final Color color;
   final Color hoverColor;
   final List<Widget> Function(_IconSubmenuButtonState state) menuChildrenGetter;
@@ -2330,6 +2673,7 @@ class _IconSubmenuButton extends StatefulWidget {
     Key? key,
     this.svg,
     this.icon,
+    this.actionIcon,
     required this.tooltip,
     required this.color,
     required this.hoverColor,
@@ -2346,6 +2690,11 @@ class _IconSubmenuButton extends StatefulWidget {
 class _IconSubmenuButtonState extends State<_IconSubmenuButton> {
   bool hover = false;
 
+  List<Widget> _menuChildren() => widget
+      .menuChildrenGetter(this)
+      .map((e) => _buildPointerTrackWidget(e, widget.ffi))
+      .toList();
+
   @override // discard @protected
   void setState(VoidCallback fn) {
     super.setState(fn);
@@ -2353,6 +2702,35 @@ class _IconSubmenuButtonState extends State<_IconSubmenuButton> {
 
   @override
   Widget build(BuildContext context) {
+    final actionIcon = widget.actionIcon;
+    if (actionIcon != null) {
+      final colors = YesDeskColors.of(context);
+      return MenuBar(
+        style: const MenuStyle(
+          padding: WidgetStatePropertyAll(EdgeInsets.zero),
+          backgroundColor: WidgetStatePropertyAll(Colors.transparent),
+          elevation: WidgetStatePropertyAll(0),
+        ),
+        children: [
+          Tooltip(
+            message: translate(widget.tooltip),
+            child: SubmenuButton(
+              menuStyle: MenuStyle(
+                backgroundColor: WidgetStatePropertyAll(colors.surface),
+                side: WidgetStatePropertyAll(BorderSide(color: colors.outline)),
+              ),
+              style: MenuItemButton.styleFrom(
+                foregroundColor: colors.text,
+                minimumSize: const Size(40, 40),
+                padding: EdgeInsets.zero,
+              ),
+              menuChildren: _menuChildren(),
+              child: Icon(actionIcon, size: 19),
+            ),
+          ),
+        ],
+      );
+    }
     assert(widget.svg != null || widget.icon != null);
     final icon = widget.icon ??
         SvgPicture.asset(
@@ -2382,10 +2760,7 @@ class _IconSubmenuButtonState extends State<_IconSubmenuButton> {
                           color: hover ? widget.hoverColor : widget.color,
                         ),
                         child: icon))),
-            menuChildren: widget
-                .menuChildrenGetter(this)
-                .map((e) => _buildPointerTrackWidget(e, widget.ffi))
-                .toList()));
+            menuChildren: _menuChildren()));
     return MenuBar(children: [
       button.marginSymmetric(
           horizontal: _ToolbarTheme.buttonHMargin,
