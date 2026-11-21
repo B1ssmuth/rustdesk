@@ -68,7 +68,7 @@ class _ConnectionEditorState extends State<ConnectionEditor> {
   late String _name = widget.duplicate
       ? l.text('Copy of ${old!.name}', 'Копия ${old!.name}')
       : old?.name ?? '';
-  late String _host = old?.host ?? '';
+  late String _host = old?.displayHost ?? '';
   late String _username = old?.username ?? '';
   late String _tags = old?.tags.join(', ') ?? '';
   late int? _port = old?.port;
@@ -110,9 +110,9 @@ class _ConnectionEditorState extends State<ConnectionEditor> {
       );
 
   void _save() {
-    final host = _host
-        .trim()
-        .replaceAll(_type == ConnectionType.remoteDesktop ? ' ' : '\x00', '');
+    final host = _type == ConnectionType.remoteDesktop
+        ? _host.trim().replaceAll(' ', '')
+        : _host.trim();
     try {
       final options = transportOptions(
           _type, _id, _name.trim(), host, _port, _username.trim(), _settings);

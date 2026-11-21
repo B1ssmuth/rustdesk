@@ -131,10 +131,8 @@ class DesktopConnections {
           _rdpLauncher.runningClients(transport.id) > 0
               ? ConnectionActivity.rdpClient
               : ConnectionActivity.none,
-        RemoteDesktopOptions() => _remoteIds.contains(profile.host) ||
-                (profile.host.endsWith('/r') &&
-                    _remoteIds.contains(
-                        profile.host.substring(0, profile.host.length - 2)))
+        RemoteDesktopOptions() => _remoteIds
+                .contains(RemoteDesktopOptions.comparableTarget(profile.host))
             ? ConnectionActivity.remoteTab
             : ConnectionActivity.none,
       };
@@ -143,7 +141,9 @@ class DesktopConnections {
     if (_readingWindows || _disposed) return;
     _readingWindows = true;
     try {
-      _remoteIds = await rustDeskWinManager.openRemoteDesktopIds();
+      _remoteIds = (await rustDeskWinManager.openRemoteDesktopIds())
+          .map(RemoteDesktopOptions.comparableTarget)
+          .toSet();
     } finally {
       _readingWindows = false;
     }

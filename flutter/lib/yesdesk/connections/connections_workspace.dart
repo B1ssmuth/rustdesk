@@ -45,6 +45,8 @@ class ConnectionsWorkspace extends StatefulWidget {
 
 class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
   final _search = FocusNode();
+  final _shortcutFocus = FocusNode();
+  final _toolbarScroll = ScrollController();
   final _launching = <String>{};
   ConnectionCatalog? _catalog;
   String? _folder;
@@ -76,6 +78,9 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
   }
 
   void _activate() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.visible) _shortcutFocus.requestFocus();
+    });
     unawaited(reload());
     unawaited(_refreshActivity());
     _poll?.cancel();
@@ -99,6 +104,8 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
     widget.sessionChanges?.removeListener(_changed);
     _poll?.cancel();
     _search.dispose();
+    _shortcutFocus.dispose();
+    _toolbarScroll.dispose();
     super.dispose();
   }
 
@@ -280,7 +287,13 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
   }
 
   Future<void> _export() async {
-    final contents = exportCatalog(_catalog!);
+    final catalog = _catalog!;
+    final contents = exportCatalog(catalog);
+    final omitted = catalog.profiles.values
+        .where((profile) =>
+            profile.type == ConnectionType.remoteDesktop &&
+            !RemoteDesktopOptions.validTarget(profile.host))
+        .length;
     try {
       final path = await FilePicker.platform.saveFile(
         dialogTitle: t('Export connections', 'Экспорт подключений'),
@@ -288,7 +301,14 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
         type: FileType.custom,
         allowedExtensions: ['json'],
       );
-      if (path != null) await File(path).writeAsString(contents, flush: true);
+      if (path == null) return;
+      await File(path).writeAsString(contents, flush: true);
+      if (omitted > 0) {
+        _notice(t(
+          'Exported. Skipped $omitted native Remote Desktop addresses with special settings.',
+          'Экспорт завершён. Пропущено адресов удалённого доступа со специальными параметрами: $omitted.',
+        ));
+      }
     } catch (_) {
       _notice(t('Could not write the catalog file.',
           'Не удалось записать файл каталога.'));
@@ -445,79 +465,85 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
     );
   }
 
-  Widget _toolbar(bool enabled) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(children: [
-          TextButton.icon(
-              onPressed: enabled ? () => _edit() : null,
-              icon: const Icon(Icons.add),
-              label: Text(t('New connection', 'Новое подключение'))),
-          IconButton(
-              tooltip: t('New folder', 'Новая папка'),
-              onPressed: enabled ? () => _folderEditor() : null,
-              icon: const Icon(Icons.create_new_folder_outlined)),
-          IconButton(
-              tooltip: t('Import profiles', 'Импорт профилей'),
-              onPressed: enabled ? _import : null,
-              icon: const Icon(Icons.file_open_outlined)),
-          IconButton(
-              tooltip: t('Export profiles', 'Экспорт профилей'),
-              onPressed: enabled ? _export : null,
-              icon: const Icon(Icons.save_alt)),
-          IconButton(
-              tooltip: _tiles
-                  ? t('Table view', 'Таблица')
-                  : t('Tile view', 'Плитки'),
-              onPressed: () => setState(() => _tiles = !_tiles),
-              icon: Icon(_tiles ? Icons.table_rows_outlined : Icons.grid_view)),
-          PopupMenuButton<CatalogSort>(
-            tooltip: t('Sort', 'Сортировка'),
-            icon: const Icon(Icons.sort),
-            onSelected: (value) => setState(() => _sort = value),
-            itemBuilder: (_) => [
-              for (final entry in {
-                CatalogSort.name: l.name,
-                CatalogSort.address: t('Address', 'Адрес'),
-                CatalogSort.type: t('Type', 'Тип'),
-                CatalogSort.recent: t('Last used', 'Последний запуск'),
-              }.entries)
-                CheckedPopupMenuItem(
-                    value: entry.key,
-                    checked: _sort == entry.key,
-                    child: Text(entry.value)),
-            ],
-          ),
-          PopupMenuButton<ConnectionType?>(
-            tooltip: t('Filter by type', 'Фильтр по типу'),
-            icon: const Icon(Icons.filter_alt_outlined),
-            onSelected: (value) => setState(() => _type = value),
-            itemBuilder: (_) => [
-              CheckedPopupMenuItem(
-                value: null,
-                checked: _type == null,
-                onTap: () => setState(() => _type = null),
-                child: Text(t('All types', 'Все типы')),
-              ),
-              for (final type in ConnectionType.values)
-                CheckedPopupMenuItem(
-                    value: type,
-                    checked: type == _type,
-                    child: Text(connectionTypeLabel(l, type))),
-            ],
-          ),
-          for (final entry in {
-            CatalogFilter.all: t('All', 'Все'),
-            CatalogFilter.favorites: l.favorite,
-            CatalogFilter.recent: t('Recent', 'Недавние'),
-          }.entries)
-            TextButton(
-              onPressed: () => setState(() => _filter = entry.key),
-              child: Text(entry.value,
-                  style: TextStyle(
-                      fontWeight:
-                          _filter == entry.key ? FontWeight.bold : null)),
+  Widget _toolbar(bool enabled) => Scrollbar(
+        controller: _toolbarScroll,
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          controller: _toolbarScroll,
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            TextButton.icon(
+                onPressed: enabled ? () => _edit() : null,
+                icon: const Icon(Icons.add),
+                label: Text(t('New connection', 'Новое подключение'))),
+            IconButton(
+                tooltip: t('New folder', 'Новая папка'),
+                onPressed: enabled ? () => _folderEditor() : null,
+                icon: const Icon(Icons.create_new_folder_outlined)),
+            IconButton(
+                tooltip: t('Import profiles', 'Импорт профилей'),
+                onPressed: enabled ? _import : null,
+                icon: const Icon(Icons.file_open_outlined)),
+            IconButton(
+                tooltip: t('Export profiles', 'Экспорт профилей'),
+                onPressed: enabled ? _export : null,
+                icon: const Icon(Icons.save_alt)),
+            IconButton(
+                tooltip: _tiles
+                    ? t('Table view', 'Таблица')
+                    : t('Tile view', 'Плитки'),
+                onPressed: () => setState(() => _tiles = !_tiles),
+                icon:
+                    Icon(_tiles ? Icons.table_rows_outlined : Icons.grid_view)),
+            PopupMenuButton<CatalogSort>(
+              tooltip: t('Sort', 'Сортировка'),
+              icon: const Icon(Icons.sort),
+              onSelected: (value) => setState(() => _sort = value),
+              itemBuilder: (_) => [
+                for (final entry in {
+                  CatalogSort.name: l.name,
+                  CatalogSort.address: t('Address', 'Адрес'),
+                  CatalogSort.type: t('Type', 'Тип'),
+                  CatalogSort.recent: t('Last used', 'Последний запуск'),
+                }.entries)
+                  CheckedPopupMenuItem(
+                      value: entry.key,
+                      checked: _sort == entry.key,
+                      child: Text(entry.value)),
+              ],
             ),
-        ]),
+            PopupMenuButton<ConnectionType?>(
+              tooltip: t('Filter by type', 'Фильтр по типу'),
+              icon: const Icon(Icons.filter_alt_outlined),
+              onSelected: (value) => setState(() => _type = value),
+              itemBuilder: (_) => [
+                CheckedPopupMenuItem(
+                  value: null,
+                  checked: _type == null,
+                  onTap: () => setState(() => _type = null),
+                  child: Text(t('All types', 'Все типы')),
+                ),
+                for (final type in ConnectionType.values)
+                  CheckedPopupMenuItem(
+                      value: type,
+                      checked: type == _type,
+                      child: Text(connectionTypeLabel(l, type))),
+              ],
+            ),
+            for (final entry in {
+              CatalogFilter.all: t('All', 'Все'),
+              CatalogFilter.favorites: l.favorite,
+              CatalogFilter.recent: t('Recent', 'Недавние'),
+            }.entries)
+              TextButton(
+                onPressed: () => setState(() => _filter = entry.key),
+                child: Text(entry.value,
+                    style: TextStyle(
+                        fontWeight:
+                            _filter == entry.key ? FontWeight.bold : null)),
+              ),
+          ]),
+        ),
       );
 
   Widget _list(ConnectionCatalog catalog) {

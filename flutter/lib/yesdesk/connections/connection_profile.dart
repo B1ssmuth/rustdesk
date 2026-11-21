@@ -17,13 +17,49 @@ final class RemoteDesktopOptions extends TransportOptions {
   @override
   ConnectionType get type => ConnectionType.remoteDesktop;
 
-  // Accept the ordinary ID, direct-address and ID@server forms. URL query
-  // parameters belong to RustDesk's native connection flow.
-  static bool validTarget(String value) =>
-      value.isNotEmpty &&
-      value.length <= 512 &&
-      RegExp(r'^[a-zA-Z0-9_.:\[\]%-]+(?:@[a-zA-Z0-9_.:\[\]%-]+)?(?:/r)?$')
-          .hasMatch(value);
+  static String visibleTarget(String value) => value.split('?').first;
+
+  static String _withoutRelay(String value) =>
+      value.endsWith('/r') || value.endsWith(r'\r')
+          ? value.substring(0, value.length - 2)
+          : value;
+
+  static String comparableTarget(String value) =>
+      _withoutRelay(visibleTarget(_withoutRelay(value)))
+          .split('@')
+          .map(_withoutRelay)
+          .join('@');
+
+  static bool validTarget(String value) {
+    if (value.isEmpty || value.length > 512 || value.contains('?'))
+      return false;
+    final parts = comparableTarget(value).split('@');
+    return parts.length <= 2 && parts.every(_validIdOrAddress);
+  }
+
+  static bool validNativeTarget(String value) {
+    if (validTarget(value)) return true;
+    final parts = _withoutRelay(value).split('?');
+    return parts.length == 2 &&
+        parts.first.contains('@') &&
+        validTarget(parts.first) &&
+        RegExp(r'^key=[a-zA-Z0-9+/=_%-]{1,256}$', caseSensitive: false)
+            .hasMatch(parts.last);
+  }
+
+  static bool _validIdOrAddress(String value) {
+    if (RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$').hasMatch(value) ||
+        SshProfile.validHost(value)) {
+      return true;
+    }
+    final address = RegExp(r'^(\[[^\]]+\]|[^:]+):([0-9]+)$').firstMatch(value);
+    final port = int.tryParse(address?.group(2) ?? '');
+    return address != null &&
+        port != null &&
+        port >= 1 &&
+        port <= 65535 &&
+        SshProfile.validHost(address.group(1)!);
+  }
 }
 
 sealed class SshConnectionOptions extends TransportOptions {
@@ -102,33 +138,17 @@ class ConnectionProfile {
         _ => null,
       };
 
-  String get address {
-    final target =
-        port == null ? host : '${host.contains(':') ? '[$host]' : host}:$port';
-    return username.isEmpty ? target : '$username@$target';
-  }
+  String get displayHost => type == ConnectionType.remoteDesktop
+      ? RemoteDesktopOptions.visibleTarget(host)
+      : host;
 
-  ConnectionProfile copyWith({
-    bool? favorite,
-    bool? pinned,
-    DateTime? lastConnectedAt,
-  }) =>
-      ConnectionProfile(
-        id: id,
-        name: name,
-        host: host,
-        port: port,
-        username: username,
-        options: options,
-        folderId: folderId,
-        tags: tags,
-        favorite: favorite ?? this.favorite,
-        pinned: pinned ?? this.pinned,
-        createdAt: createdAt,
-        updatedAt: updatedAt,
-        lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
-        nativePeer: nativePeer,
-      );
+  String get address {
+    final target = port == null
+        ? displayHost
+        : '${host.contains(':') ? '[$host]' : host}:$port';
+    if (username.isEmpty || type == ConnectionType.remoteDesktop) return target;
+    return '$username@$target';
+  }
 }
 
 /// Corporate identities and permissions belong to the management server.

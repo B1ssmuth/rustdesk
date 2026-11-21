@@ -165,7 +165,11 @@ class ConnectionRepository implements PersonalConnectionsProvider {
       profiles.add(project(
         key: entry.key,
         name: profile.name,
-        host: profile.host,
+        host: peerId != null &&
+                peer != null &&
+                RemoteDesktopOptions.visibleTarget(peer.id) == profile.host
+            ? peer.id
+            : profile.host,
         username: profile.username,
         options: profile.options,
         recentAt: peer?.recentAt,
@@ -226,11 +230,15 @@ class ConnectionRepository implements PersonalConnectionsProvider {
     late final String key;
     String? removedSecret;
     String? nativeTarget;
+    String? legacyFolder;
     switch (safe.type) {
       case ConnectionType.ssh:
       case ConnectionType.sftp:
         final previous = (old?.options as SshConnectionOptions?)?.transport;
         final backingId = previous?.id ?? sourceUuid(safe.type.name, safe.id);
+        if (previous != null && previous.group.isNotEmpty) {
+          legacyFolder = sourceUuid('ssh-group', previous.group);
+        }
         final transport = transportOptions(
           safe.type,
           backingId,
@@ -275,7 +283,7 @@ class ConnectionRepository implements PersonalConnectionsProvider {
     }
     state.records[key] = {
       'id': safe.id,
-      'folderId': safe.folderId,
+      if (safe.folderId != legacyFolder) 'folderId': safe.folderId,
       'tags': safe.tags.toList(),
       if (safe.type != ConnectionType.ssh && safe.type != ConnectionType.sftp)
         'favorite': safe.favorite,
@@ -295,6 +303,7 @@ class ConnectionRepository implements PersonalConnectionsProvider {
         state.records.putIfAbsent(key, () => <String, dynamic>{}) as Json;
     if (record['id'] == id) return;
     record['id'] = id;
+    record['reserved'] = true;
     await state.write();
   }
 
@@ -404,7 +413,13 @@ class ConnectionRepository implements PersonalConnectionsProvider {
       var count = 0;
       catalog = await _read(state);
       for (final profile in incoming.profiles.values) {
-        if (catalog.profiles.containsKey(profile.id)) continue;
+        final existing = catalog.profiles[profile.id];
+        if (existing != null) {
+          final metadata = state.records[_key(existing, state)] as Json?;
+          if (existing.type != profile.type || metadata?['reserved'] != true) {
+            continue;
+          }
+        }
         // Persist each completed profile. A retry uses the same native key.
         await _save(state, catalog, profile);
         count++;

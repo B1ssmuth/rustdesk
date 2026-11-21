@@ -24,7 +24,10 @@ class ConnectionLauncher {
     }
     switch (profile.options) {
       case RemoteDesktopOptions(:final forceRelay):
-        if (!RemoteDesktopOptions.validTarget(profile.host)) {
+        final valid = profile.nativePeer
+            ? RemoteDesktopOptions.validNativeTarget(profile.host)
+            : RemoteDesktopOptions.validTarget(profile.host);
+        if (!valid) {
           throw const FormatException('Invalid remote desktop target');
         }
         await openRemoteDesktop(profile.host, forceRelay);
