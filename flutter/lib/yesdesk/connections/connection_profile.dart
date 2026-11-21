@@ -31,8 +31,12 @@ final class RemoteDesktopOptions extends TransportOptions {
           .join('@');
 
   static bool validTarget(String value) {
-    if (value.isEmpty || value.length > 512 || value.contains('?'))
+    if (value.isEmpty ||
+        value.length > 512 ||
+        value.contains('?') ||
+        value.contains(RegExp(r'\s'))) {
       return false;
+    }
     final parts = comparableTarget(value).split('@');
     return parts.length <= 2 && parts.every(_validIdOrAddress);
   }

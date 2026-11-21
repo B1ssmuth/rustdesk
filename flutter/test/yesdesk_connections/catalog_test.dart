@@ -280,6 +280,10 @@ void main() {
     final original = (await repository.load()).profiles.values.single;
     expect(original.displayHost, '123456789@desk.example:21116');
     expect(RemoteDesktopOptions.validTarget(target), isFalse);
+    expect(RemoteDesktopOptions.validTarget('123456789\n'), isFalse);
+    expect(RemoteDesktopOptions.validTarget('123456789/r@desk.example:21116'),
+        isTrue);
+    expect(RemoteDesktopOptions.validTarget('desk.example:65536'), isFalse);
     expect(RemoteDesktopOptions.validNativeTarget(target), isTrue);
     expect(exportCatalog(await repository.load()),
         isNot(contains('legacyServerKey')));
