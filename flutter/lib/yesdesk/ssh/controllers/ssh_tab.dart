@@ -8,7 +8,7 @@ import '../services/ssh_transport.dart';
 import '../storage/ssh_repository.dart';
 
 class SshTab extends ChangeNotifier {
-  SshTab(this.profile, this.trust)
+  SshTab(this.profile, this.trust, {this.filesOnly = false})
       : title = profile.name,
         fontSize = profile.fontSize,
         terminal = Terminal(maxLines: profile.scrollback) {
@@ -24,6 +24,22 @@ class SshTab extends ChangeNotifier {
   final SshProfile profile;
   final SshHostTrust trust;
   final Terminal terminal;
+  final bool filesOnly;
+  bool showFiles = false;
+  bool filesOpened = false;
+  double filesWidth = 390;
+
+  void toggleFiles() {
+    showFiles = !showFiles;
+    if (showFiles) filesOpened = true;
+    notifyListeners();
+  }
+
+  void resizeFiles(double width) {
+    filesWidth = width;
+    notifyListeners();
+  }
+
   String title;
   double fontSize;
 
@@ -54,6 +70,7 @@ class SshTab extends ChangeNotifier {
       },
       onText: terminal.write,
       size: () => _size,
+      terminal: !filesOnly,
     );
     run = attempt;
     unawaited(attempt.start());

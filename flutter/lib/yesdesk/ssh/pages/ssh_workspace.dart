@@ -10,6 +10,7 @@ import '../../widgets.dart';
 import '../controllers/ssh_tab.dart';
 import '../models/ssh_profile.dart';
 import '../services/ssh_transport.dart';
+import '../sftp/sftp_explorer.dart';
 import '../storage/ssh_repository.dart';
 import '../storage/ssh_secrets.dart';
 import '../widgets/ssh_dialogs.dart';
@@ -308,8 +309,8 @@ class _SshWorkspaceState extends State<SshWorkspace> {
     ));
   }
 
-  void _open(SshProfile profile) {
-    final tab = SshTab(profile, _repository);
+  void _open(SshProfile profile, {bool filesOnly = false}) {
+    final tab = SshTab(profile, _repository, filesOnly: filesOnly);
     setState(() {
       _tabs.add(tab);
       _current = tab;
@@ -369,6 +370,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
         trailing: PopupMenuButton<String>(
           tooltip: l.text('Connection actions', 'Действия подключения'),
           onSelected: (action) {
+            if (action == 'sftp') _open(profile, filesOnly: true);
             if (action == 'edit') unawaited(_edit(profile));
             if (action == 'delete') unawaited(_delete(profile));
             if (action == 'favorite') {
@@ -377,6 +379,10 @@ class _SshWorkspaceState extends State<SshWorkspace> {
             }
           },
           itemBuilder: (_) => [
+            PopupMenuItem(
+                value: 'sftp',
+                child:
+                    Text(l.text('Open SFTP session', 'Открыть SFTP-сессию'))),
             PopupMenuItem(value: 'edit', child: Text(l.edit)),
             PopupMenuItem(
                 value: 'favorite',
@@ -556,7 +562,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
           },
       };
 
-  Widget _session(SshTab tab) => ListenableBuilder(
+  Widget _session(SshTab tab, bool visible) => ListenableBuilder(
         key: ObjectKey(tab),
         listenable: tab,
         builder: (context, _) {
@@ -580,6 +586,18 @@ class _SshWorkspaceState extends State<SshWorkspace> {
                           )),
                     ),
                   ),
+                  if (!tab.filesOnly &&
+                      (tab.phase == SshPhase.active || tab.showFiles))
+                    YesDeskIconButton(
+                      label: tab.showFiles
+                          ? l.text(
+                              'Hide SFTP Explorer', 'Скрыть проводник SFTP')
+                          : l.text(
+                              'Show SFTP Explorer', 'Показать проводник SFTP'),
+                      icon: Icons.folder_outlined,
+                      selected: tab.showFiles,
+                      onPressed: tab.toggleFiles,
+                    ),
                   if (tab.phase == SshPhase.active)
                     YesDeskIconButton(
                       label: l.text('Disconnect', 'Отключить'),
@@ -626,11 +644,70 @@ class _SshWorkspaceState extends State<SshWorkspace> {
                     ],
                   ),
                 ),
-              Expanded(child: SshTerminalView(tab: tab, labels: l)),
+              Expanded(child: _sessionBody(tab, visible)),
             ],
           );
         },
       );
+
+  Widget _sessionBody(SshTab tab, bool visible) {
+    final run = tab.run;
+    final show = tab.filesOnly || tab.showFiles;
+    final explorer = run == null ||
+            (!tab.filesOnly && !tab.filesOpened) ||
+            (!run.active && !run.wasActive)
+        ? const SizedBox.shrink()
+        : SftpExplorer(
+            key: ObjectKey(run),
+            run: run,
+            labels: l,
+            twoPanes: tab.filesOnly,
+            visible: visible && show,
+          );
+    if (tab.filesOnly) return explorer;
+
+    return LayoutBuilder(builder: (context, bounds) {
+      final split = bounds.maxWidth >= 600;
+      final width = split
+          ? tab.filesWidth.clamp(300, bounds.maxWidth - 260).toDouble()
+          : bounds.maxWidth;
+      return Stack(children: [
+        Positioned.fill(
+          right: show && split ? width + 6 : 0,
+          child: ExcludeFocus(
+            excluding: show && !split,
+            child: SshTerminalView(tab: tab, labels: l),
+          ),
+        ),
+        if (show && split)
+          Positioned(
+            top: 0,
+            bottom: 0,
+            right: width,
+            width: 6,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeColumn,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragUpdate: (event) => tab.resizeFiles(
+                    (width - event.delta.dx)
+                        .clamp(300, bounds.maxWidth - 260)
+                        .toDouble()),
+                child: const VerticalDivider(width: 6),
+              ),
+            ),
+          ),
+        Positioned(
+          top: 0,
+          bottom: 0,
+          right: 0,
+          width: width,
+          child:
+              Visibility(visible: show, maintainState: true, child: explorer),
+        ),
+      ]);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -677,7 +754,10 @@ class _SshWorkspaceState extends State<SshWorkspace> {
                                 _current = tab;
                                 _showProfiles = false;
                               }),
-                              child: Text(tab.title,
+                              child: Text(
+                                  tab.filesOnly
+                                      ? '${tab.title} · SFTP'
+                                      : tab.title,
                                   overflow: TextOverflow.ellipsis),
                             ),
                             YesDeskIconButton(
@@ -738,7 +818,8 @@ class _SshWorkspaceState extends State<SshWorkspace> {
                                 ExcludeFocus(
                                   key: ObjectKey(tab),
                                   excluding: tab != _current || !showTerminal,
-                                  child: _session(tab),
+                                  child: _session(
+                                      tab, tab == _current && showTerminal),
                                 ),
                             ],
                           ),

@@ -92,8 +92,9 @@ class SftpClient {
   Future<SftpFile> open(
     String path, {
     SftpFileOpenMode mode = SftpFileOpenMode.read,
+    SftpFileAttrs? attrs,
   }) async {
-    final reply = await _sendOpen(path, mode, SftpFileAttrs());
+    final reply = await _sendOpen(path, mode, attrs ?? SftpFileAttrs());
     if (reply is SftpHandlePacket) return SftpFile(this, reply.handle);
     if (reply is! SftpStatusPacket) throw SftpError('Unexpected reply');
     throw SftpStatusError.fromStatus(reply);
@@ -192,11 +193,14 @@ class SftpClient {
   /// (version "1"), this method uses it to perform an atomic rename with
   /// POSIX semantics (replace destination if it exists). Otherwise, it falls
   /// back to the standard SFTP `SSH_FXP_RENAME` request.
-  Future<void> rename(String oldPath, String newPath) async {
+  ///
+  /// Set [replace] to false to request SFTP v3 no-overwrite semantics.
+  Future<void> rename(String oldPath, String newPath,
+      {bool replace = true}) async {
     // Prefer OpenSSH's posix-rename extension when available.
     final hs = await handshake;
     final extVersion = hs.extensions['posix-rename@openssh.com'];
-    if (extVersion != null) {
+    if (replace && extVersion != null) {
       try {
         await _checkExtension('posix-rename@openssh.com', '1');
         final payload =

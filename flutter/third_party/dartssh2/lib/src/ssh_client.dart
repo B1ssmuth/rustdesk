@@ -766,11 +766,19 @@ class SSHClient {
 
   /// Open a new SFTP session. Returns a [SftpClient] that can be used to
   /// interact with the remote side.
-  Future<SftpClient> sftp() async {
+  Future<SftpClient> sftp({Duration? timeout}) async {
     await _authenticated.future;
 
     final channelController = await _openSessionChannel();
-    channelController.sendSubsystem('sftp');
+    try {
+      final request = channelController.sendSubsystem('sftp');
+      if (!await (timeout == null ? request : request.timeout(timeout))) {
+        throw SSHChannelRequestError('Failed to start SFTP');
+      }
+    } catch (_) {
+      channelController.destroy();
+      rethrow;
+    }
 
     return SftpClient(
       channelController.channel,
