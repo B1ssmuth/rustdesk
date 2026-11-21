@@ -34,14 +34,13 @@ for mode in enabled disabled; do
     docker logs "$container"
     exit 1
   fi
+  fingerprint="$(docker exec "$container" ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | cut -d ' ' -f 2)"
   if [[ "$mode" == enabled ]]; then
-    export YESDESK_SFTP_PORT="$port"
-    YESDESK_SFTP_FINGERPRINT="$(docker exec "$container" ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | cut -d ' ' -f 2)"
-    export YESDESK_SFTP_FINGERPRINT
+    export YESDESK_SFTP_PORT="$port" YESDESK_SFTP_FINGERPRINT="$fingerprint"
   else
-    export YESDESK_SFTP_DISABLED_PORT="$port"
+    export YESDESK_SFTP_DISABLED_PORT="$port" YESDESK_SFTP_DISABLED_FINGERPRINT="$fingerprint"
   fi
 done
 
 cd "$root/flutter"
-flutter test --no-pub --reporter expanded test/yesdesk_sftp
+flutter test --no-pub --reporter expanded test/yesdesk_sftp "$@"

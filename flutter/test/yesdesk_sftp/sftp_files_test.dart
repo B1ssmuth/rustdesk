@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
@@ -64,7 +63,10 @@ void main() {
           : false);
 
   Future<SshRun> connect(
-      {bool terminal = false, int? port, void Function(String)? onText}) async {
+      {bool terminal = false,
+      int? port,
+      String? fingerprint,
+      void Function(String)? onText}) async {
     final run = SshRun(
       terminal: terminal,
       profile: SshProfile(
@@ -78,7 +80,8 @@ void main() {
       trust: repository,
       prompts: SshPrompts(
         verify: (key, _) async =>
-            port != null || key.fingerprint == _env['YESDESK_SFTP_FINGERPRINT'],
+            key.fingerprint ==
+            (fingerprint ?? _env['YESDESK_SFTP_FINGERPRINT']),
         password: (_) async => null,
         privateKey: (_) async =>
             (path: _env['YESDESK_SFTP_KEY']!, passphrase: null),
@@ -134,6 +137,7 @@ void main() {
       final disabled = await connect(
           terminal: true,
           port: int.parse(_env['YESDESK_SFTP_DISABLED_PORT']!),
+          fingerprint: _env['YESDESK_SFTP_DISABLED_FINGERPRINT'],
           onText: disabledOutput.write);
       await expectLater(
           disabled.openSftp(), throwsA(isA<SSHChannelRequestError>()));
@@ -238,10 +242,10 @@ void main() {
     test(
         'cancel cleans staging and disconnect never publishes a partial download',
         () async {
-      final (run, files, directory) = await workspace();
+      final (_, files, directory) = await workspace();
       final localSource = File(p.join(local.root, 'large'));
       final handle = await localSource.open(mode: FileMode.write);
-      await handle.truncate(32 * 1024 * 1024);
+      await handle.truncate(8 * 1024 * 1024);
       await handle.close();
       final target = remoteChild(directory, 'large');
       final progress = TransferProgress();
@@ -260,19 +264,41 @@ void main() {
 
       await files.upload(
           localSource, target, TransferProgress(), (_) async => true);
+      final proxy = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(proxy.close);
+      Socket? downstream, upstream;
+      void drop() {
+        downstream?.destroy();
+        upstream?.destroy();
+      }
+
+      final relay = proxy.listen((connection) async {
+        downstream = connection;
+        final server = upstream = await Socket.connect('127.0.0.1', _port!);
+        connection.listen(server.add, onError: (_) => drop(), onDone: drop);
+        server.listen(connection.add, onError: (_) => drop(), onDone: drop);
+      });
+      addTearDown(relay.cancel);
+      addTearDown(drop);
+      final run = await connect(port: proxy.port);
+      final receivingClient = await run.openSftp();
+      addTearDown(receivingClient.close);
+      final receiver = SftpFiles(receivingClient, _timeout);
       final receiving = TransferProgress();
       final disconnect =
           Timer.periodic(const Duration(milliseconds: 1), (timer) {
         if (receiving.bytes > 0) {
-          run.cancel();
+          drop();
           timer.cancel();
         }
       });
       addTearDown(disconnect.cancel);
       await expectLater(
-          files.download(target, local, local.root, 'interrupted', receiving,
+          receiver.download(target, local, local.root, 'interrupted', receiving,
               (_) async => true),
           throwsA(isA<SftpAbortError>()));
+      await run.done.timeout(_timeout);
+      expect(run.failure, SshFailure.disconnected);
       expect(await File(p.join(local.root, 'interrupted')).exists(), isFalse);
       expect(receiving.leftover, isNull);
     }, timeout: const Timeout(Duration(minutes: 6)));
