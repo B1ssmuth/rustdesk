@@ -59,8 +59,10 @@ class SshRun {
     required this.onPhase,
     required this.onText,
     required this.size,
+    this.terminal = true,
   });
 
+  final bool terminal;
   final SshProfile profile;
   final SshHostTrust trust;
   final SshPrompts prompts;
@@ -83,7 +85,35 @@ class SshRun {
   SshHostKey? expectedKey;
   SshHostKey? receivedKey;
   bool get ended => _ended.isCompleted;
-  bool get active => !ended && _shell != null;
+  bool _authenticated = false;
+  bool wasActive = false;
+  bool get active => !ended && _authenticated && (!terminal || _shell != null);
+  Future<void> get done => _ended.future;
+
+  Future<SftpClient> openSftp() async {
+    final client = _client;
+    if (!active || client == null) throw const _SshCancelled();
+    // A late channel open must still be disposed after the caller times out.
+    var abandoned = false;
+    final opening = client.sftp(timeout: _timeout).then((sftp) {
+      if (ended || abandoned) {
+        sftp.close().ignore();
+        throw const _SshCancelled();
+      }
+      return sftp;
+    });
+    SftpClient? sftp;
+    try {
+      final opened = await _untilEnded<SftpClient>(opening, _timeout);
+      sftp = opened;
+      await _untilEnded(opened.handshake, _timeout);
+      return opened;
+    } catch (_) {
+      abandoned = true;
+      sftp?.close().ignore();
+      rethrow;
+    }
+  }
 
   Duration get _timeout => Duration(seconds: profile.timeoutSeconds);
   static const _promptTimeout = Duration(minutes: 2);
@@ -195,10 +225,15 @@ class SshRun {
         if (!ended) _finish(failure ?? _classify(error));
       }));
 
-      // The SSH transport completes authentication only after the host key
-      // callback succeeds. The channel requests only a PTY and an interactive shell.
+      // Authentication completes only after the host key callback succeeds.
       await _untilEnded(client.authenticated);
+      _authenticated = true;
       _stageTimer?.cancel();
+      if (!terminal) {
+        wasActive = true;
+        onPhase(SshPhase.active);
+        return;
+      }
       final initial = size();
       final shell = await _untilEnded(
           client.shell(
@@ -222,6 +257,7 @@ class SshRun {
         }));
       }
       resize();
+      wasActive = true;
       onPhase(SshPhase.active);
     } on _SshCancelled {
       return;
@@ -343,14 +379,14 @@ class SshRun {
   }
 
   void write(String text) {
-    if (active) _shell!.write(Uint8List.fromList(utf8.encode(text)));
+    if (active) _shell?.write(Uint8List.fromList(utf8.encode(text)));
   }
 
   void resize() {
-    if (!active) return;
+    if (!active || _shell == null) return;
     _resizeTimer?.cancel();
     _resizeTimer = Timer(const Duration(milliseconds: 60), () {
-      if (!active) return;
+      if (!active || _shell == null) return;
       final current = size();
       _shell!.resizeTerminal(
           current.columns, current.rows, current.width, current.height);
