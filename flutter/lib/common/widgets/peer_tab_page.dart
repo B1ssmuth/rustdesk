@@ -19,6 +19,8 @@ import 'package:flutter_hbb/models/peer_model.dart';
 
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/yesdesk/rdp/rdp_workspace_stub.dart'
+    if (dart.library.io) 'package:flutter_hbb/yesdesk/rdp/rdp_workspace.dart';
 import 'package:flutter_hbb/yesdesk/ssh/pages/ssh_workspace_stub.dart'
     if (dart.library.io) 'package:flutter_hbb/yesdesk/ssh/pages/ssh_workspace.dart';
 import 'package:flutter_hbb/yesdesk/ssh/widgets/ssh_strings.dart';
@@ -50,6 +52,8 @@ EdgeInsets? _menuPadding() {
   return (isDesktop || isWebDesktop) ? kDesktopMenuPadding : null;
 }
 
+enum _WorkspaceSection { devices, ssh, rdp }
+
 class _PeerTabPageState extends State<PeerTabPage>
     with SingleTickerProviderStateMixin {
   final List<_TabEntry> entries = [
@@ -77,8 +81,16 @@ class _PeerTabPageState extends State<PeerTabPage>
     ),
   ];
   RelativeRect? mobileTabContextMenuPos;
-  bool _sshSelected = false;
-  bool _sshVisited = false;
+  _WorkspaceSection _section = _WorkspaceSection.devices;
+  final Set<_WorkspaceSection> _visited = {};
+
+  void _openSection(_WorkspaceSection section) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _visited.add(section);
+      _section = section;
+    });
+  }
 
   final isOptVisiableFixed = isOptionFixed(kOptionPeerTabVisible);
 
@@ -156,9 +168,14 @@ class _PeerTabPageState extends State<PeerTabPage>
     final colors = YesDeskColors.of(context);
     final tabs = model.visibleEnabledOrderedIndexs;
     final supportsSsh = isDesktop && !isWeb;
+    final supportsRdp = supportsSsh && isWindows && !bind.isIncomingOnly();
     final language = supportsSsh ? bind.mainGetLocalOption(key: 'lang') : '';
-    final sshLanguage = language.isEmpty ? localeName.toString() : language;
+    final workspaceLanguage =
+        language.isEmpty ? localeName.toString() : language;
     final tabFixed = isOptionFixed(kOptionPeerTabIndex);
+    final devicesSelected = _section == _WorkspaceSection.devices;
+    final sshSelected = _section == _WorkspaceSection.ssh;
+    final rdpSelected = _section == _WorkspaceSection.rdp;
     return LayoutBuilder(builder: (context, constraints) {
       final compact = constraints.maxWidth < 690;
       return Row(
@@ -192,10 +209,10 @@ class _PeerTabPageState extends State<PeerTabPage>
                                 icon: model.tabIcon(tab),
                                 compact: compact,
                                 selected:
-                                    !_sshSelected && model.currentTab == tab,
-                                onPressed: _sshSelected
+                                    devicesSelected && model.currentTab == tab,
+                                onPressed: !devicesSelected
                                     ? () {
-                                        setState(() => _sshSelected = false);
+                                        _openSection(_WorkspaceSection.devices);
                                         if (!tabFixed &&
                                             !model.multiSelectionMode) {
                                           _selectTab(tab);
@@ -217,11 +234,12 @@ class _PeerTabPageState extends State<PeerTabPage>
                           horizontal: YesDeskSpace.sm),
                       child: YesDeskNavItem(
                         icon: Icons.desktop_windows_outlined,
-                        label: SshStrings(sshLanguage)
+                        label: SshStrings(workspaceLanguage)
                             .text('Remote Desktop', 'Удалённый рабочий стол'),
-                        selected: !_sshSelected,
+                        selected: devicesSelected,
                         compact: compact,
-                        onPressed: () => setState(() => _sshSelected = false),
+                        onPressed: () =>
+                            _openSection(_WorkspaceSection.devices),
                       ),
                     ),
                   if (supportsSsh)
@@ -230,18 +248,26 @@ class _PeerTabPageState extends State<PeerTabPage>
                           horizontal: YesDeskSpace.sm),
                       child: YesDeskNavItem(
                         icon: Icons.terminal,
-                        label: SshStrings(sshLanguage).title,
-                        selected: _sshSelected,
+                        label: SshStrings(workspaceLanguage).title,
+                        selected: sshSelected,
                         compact: compact,
                         onPressed: model.multiSelectionMode
                             ? null
-                            : () {
-                                FocusManager.instance.primaryFocus?.unfocus();
-                                setState(() {
-                                  _sshVisited = true;
-                                  _sshSelected = true;
-                                });
-                              },
+                            : () => _openSection(_WorkspaceSection.ssh),
+                      ),
+                    ),
+                  if (supportsRdp)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: YesDeskSpace.sm),
+                      child: YesDeskNavItem(
+                        icon: Icons.monitor_outlined,
+                        label: 'Windows RDP',
+                        selected: rdpSelected,
+                        compact: compact,
+                        onPressed: model.multiSelectionMode
+                            ? null
+                            : () => _openSection(_WorkspaceSection.rdp),
                       ),
                     ),
                   Align(
@@ -272,11 +298,11 @@ class _PeerTabPageState extends State<PeerTabPage>
           const VerticalDivider(width: 1),
           Expanded(
             child: IndexedStack(
-              index: _sshSelected ? 1 : 0,
+              index: _section.index,
               sizing: StackFit.expand,
               children: [
                 ExcludeFocus(
-                  excluding: _sshSelected,
+                  excluding: !devicesSelected,
                   child: LayoutBuilder(builder: (context, body) {
                     return SingleChildScrollView(
                       primary: false,
@@ -319,11 +345,20 @@ class _PeerTabPageState extends State<PeerTabPage>
                     );
                   }),
                 ),
-                if (_sshVisited)
+                if (_visited.contains(_WorkspaceSection.ssh))
                   ExcludeFocus(
-                    excluding: !_sshSelected,
-                    child: SshWorkspace(language: sshLanguage),
-                  ),
+                    excluding: !sshSelected,
+                    child: SshWorkspace(language: workspaceLanguage),
+                  )
+                else
+                  const SizedBox.shrink(),
+                if (_visited.contains(_WorkspaceSection.rdp))
+                  ExcludeFocus(
+                    excluding: !rdpSelected,
+                    child: RdpWorkspace(language: workspaceLanguage),
+                  )
+                else
+                  const SizedBox.shrink(),
               ],
             ),
           ),
