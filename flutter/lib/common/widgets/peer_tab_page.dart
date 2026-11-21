@@ -19,10 +19,8 @@ import 'package:flutter_hbb/models/peer_model.dart';
 
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
-import 'package:flutter_hbb/yesdesk/rdp/rdp_workspace_stub.dart'
-    if (dart.library.io) 'package:flutter_hbb/yesdesk/rdp/rdp_workspace.dart';
-import 'package:flutter_hbb/yesdesk/ssh/pages/ssh_workspace_stub.dart'
-    if (dart.library.io) 'package:flutter_hbb/yesdesk/ssh/pages/ssh_workspace.dart';
+import 'package:flutter_hbb/yesdesk/connections/desktop_connections_stub.dart'
+    if (dart.library.io) 'package:flutter_hbb/yesdesk/connections/desktop_connections.dart';
 import 'package:flutter_hbb/yesdesk/ssh/widgets/ssh_strings.dart';
 import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:flutter_hbb/yesdesk/widgets.dart';
@@ -52,7 +50,7 @@ EdgeInsets? _menuPadding() {
   return (isDesktop || isWebDesktop) ? kDesktopMenuPadding : null;
 }
 
-enum _WorkspaceSection { devices, ssh, rdp }
+enum _WorkspaceSection { devices, ssh, rdp, catalog }
 
 class _PeerTabPageState extends State<PeerTabPage>
     with SingleTickerProviderStateMixin {
@@ -83,9 +81,24 @@ class _PeerTabPageState extends State<PeerTabPage>
   RelativeRect? mobileTabContextMenuPos;
   _WorkspaceSection _section = _WorkspaceSection.devices;
   final Set<_WorkspaceSection> _visited = {};
+  late final _connections = DesktopConnections(
+    showSsh: () {
+      if (mounted) _openSection(_WorkspaceSection.ssh);
+    },
+  );
+
+  @override
+  void dispose() {
+    if (widget.workspaceHeader != null && isDesktop && !isWeb) {
+      _connections.dispose();
+    }
+    super.dispose();
+  }
 
   void _openSection(_WorkspaceSection section) {
     FocusManager.instance.primaryFocus?.unfocus();
+    if (section == _WorkspaceSection.ssh) _connections.refreshSsh();
+    if (section == _WorkspaceSection.rdp) _connections.refreshRdp();
     setState(() {
       _visited.add(section);
       _section = section;
@@ -176,6 +189,7 @@ class _PeerTabPageState extends State<PeerTabPage>
     final devicesSelected = _section == _WorkspaceSection.devices;
     final sshSelected = _section == _WorkspaceSection.ssh;
     final rdpSelected = _section == _WorkspaceSection.rdp;
+    final catalogSelected = _section == _WorkspaceSection.catalog;
     return LayoutBuilder(builder: (context, constraints) {
       final compact = constraints.maxWidth < 690;
       return Row(
@@ -188,6 +202,20 @@ class _PeerTabPageState extends State<PeerTabPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (supportsSsh)
+                    Padding(
+                      padding: const EdgeInsets.all(YesDeskSpace.sm),
+                      child: YesDeskNavItem(
+                        icon: Icons.folder_copy_outlined,
+                        label: SshStrings(workspaceLanguage)
+                            .text('My connections', 'Мои подключения'),
+                        selected: catalogSelected,
+                        compact: compact,
+                        onPressed: model.multiSelectionMode
+                            ? null
+                            : () => _openSection(_WorkspaceSection.catalog),
+                      ),
+                    ),
                   Flexible(
                     child: visibleContextMenuListener(
                       ReorderableListView.builder(
@@ -248,7 +276,7 @@ class _PeerTabPageState extends State<PeerTabPage>
                           horizontal: YesDeskSpace.sm),
                       child: YesDeskNavItem(
                         icon: Icons.terminal,
-                        label: SshStrings(workspaceLanguage).title,
+                        label: 'SSH / SFTP',
                         selected: sshSelected,
                         compact: compact,
                         onPressed: model.multiSelectionMode
@@ -348,14 +376,22 @@ class _PeerTabPageState extends State<PeerTabPage>
                 if (_visited.contains(_WorkspaceSection.ssh))
                   ExcludeFocus(
                     excluding: !sshSelected,
-                    child: SshWorkspace(language: workspaceLanguage),
+                    child: _connections.ssh(workspaceLanguage),
                   )
                 else
                   const SizedBox.shrink(),
                 if (_visited.contains(_WorkspaceSection.rdp))
                   ExcludeFocus(
                     excluding: !rdpSelected,
-                    child: RdpWorkspace(language: workspaceLanguage),
+                    child: _connections.rdp(workspaceLanguage),
+                  )
+                else
+                  const SizedBox.shrink(),
+                if (_visited.contains(_WorkspaceSection.catalog))
+                  ExcludeFocus(
+                    excluding: !catalogSelected,
+                    child: _connections.catalog(workspaceLanguage,
+                        visible: catalogSelected),
                   )
                 else
                   const SizedBox.shrink(),

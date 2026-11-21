@@ -22,6 +22,9 @@ class RdpLauncher {
   final String Function() _executable;
   final StartMstsc _start;
   final Directory? _temporaryRoot;
+  final Map<String, int> _clients = {};
+
+  int runningClients(String profileId) => _clients[profileId] ?? 0;
 
   static String _systemMstsc() {
     if (!Platform.isWindows) throw UnsupportedError('MSTSC requires Windows');
@@ -56,17 +59,25 @@ class RdpLauncher {
       final process = await _start(executable, [file.path]);
       process.stdout.drain<void>().ignore();
       process.stderr.drain<void>().ignore();
-      return (exitCode: _watchExit(process, directory));
+      _clients.update(profile.id, (count) => count + 1, ifAbsent: () => 1);
+      return (exitCode: _watchExit(profile.id, process, directory));
     } catch (_) {
       await _cleanup(directory);
       rethrow;
     }
   }
 
-  static Future<int> _watchExit(Process process, Directory directory) async {
+  Future<int> _watchExit(
+      String id, Process process, Directory directory) async {
     try {
       return await process.exitCode;
     } finally {
+      final remaining = runningClients(id) - 1;
+      if (remaining == 0) {
+        _clients.remove(id);
+      } else {
+        _clients[id] = remaining;
+      }
       await _cleanup(directory);
     }
   }

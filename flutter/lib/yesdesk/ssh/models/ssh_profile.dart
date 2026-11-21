@@ -15,6 +15,7 @@ class SshProfile {
     this.group = '',
     this.comment = '',
     this.favorite = false,
+    this.filesOnly = false,
     this.secretRef,
     this.timeoutSeconds = 15,
     this.fontSize = 14,
@@ -47,6 +48,7 @@ class SshProfile {
   final String group;
   final String comment;
   final bool favorite;
+  final bool filesOnly;
   final String? secretRef;
   final int timeoutSeconds;
   final double fontSize;
@@ -93,6 +95,7 @@ class SshProfile {
         group: json['group'] as String? ?? '',
         comment: json['comment'] as String? ?? '',
         favorite: json['favorite'] as bool? ?? false,
+        filesOnly: json['filesOnly'] as bool? ?? false,
         secretRef: json['secretRef'] as String?,
         timeoutSeconds: json['timeoutSeconds'] as int? ?? 15,
         fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14,
@@ -110,6 +113,7 @@ class SshProfile {
         'group': group,
         'comment': comment,
         'favorite': favorite,
+        if (filesOnly) 'filesOnly': true,
         'secretRef': secretRef,
         'timeoutSeconds': timeoutSeconds,
         'fontSize': fontSize,

@@ -93,7 +93,8 @@ class SshRepository implements SshHostTrust {
                 !clearSecret &&
                 current.endpoint == profile.endpoint &&
                 current.username == profile.username &&
-                current.auth == profile.auth
+                current.auth == profile.auth &&
+                current.filesOnly == profile.filesOnly
             ? current.secretRef
             : null;
         profiles[profile.id] = profile.withSecret(retained).toJson();
@@ -125,7 +126,8 @@ class SshRepository implements SshHostTrust {
         final current = SshProfile.fromJson(json);
         if (current.endpoint != profile.endpoint ||
             current.username != profile.username ||
-            current.auth != profile.auth) {
+            current.auth != profile.auth ||
+            current.filesOnly != profile.filesOnly) {
           return (saved: false, previous: null);
         }
         profiles![profile.id] = current.withSecret(reference).toJson();

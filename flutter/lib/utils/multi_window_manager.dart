@@ -401,6 +401,22 @@ class RustDeskMultiWindowManager {
     return MultiWindowCallResult(wnds[0], res);
   }
 
+  /// Open remote desktop tabs, including those connecting or awaiting input.
+  Future<Set<String>> openRemoteDesktopIds() async {
+    final windows = _remoteDesktopWindows.toList();
+    final lists = await Future.wait(windows.map((id) async {
+      try {
+        final value = await DesktopMultiWindow.invokeMethod(
+            id, kWindowEventGetRemoteList, null) as String?;
+        return value?.split(',').where((id) => id.isNotEmpty) ?? <String>[];
+      } catch (_) {
+        // A window can close or move a tab while the snapshot is in flight.
+        return <String>[];
+      }
+    }));
+    return lists.expand((ids) => ids).toSet();
+  }
+
   List<int> _findWindowsByType(WindowType type) {
     switch (type) {
       case WindowType.Main:
@@ -472,7 +488,8 @@ class RustDeskMultiWindowManager {
     }
     for (int i = 0; i < windows.length; i++) {
       final wId = windows[i];
-      final shouldSavePos = type != WindowType.Terminal || i == windows.length - 1;
+      final shouldSavePos =
+          type != WindowType.Terminal || i == windows.length - 1;
       if (shouldSavePos) {
         debugPrint("closing multi window, type: ${type.toString()} id: $wId");
         try {

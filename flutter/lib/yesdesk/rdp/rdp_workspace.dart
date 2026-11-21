@@ -13,17 +13,19 @@ class RdpWorkspace extends StatefulWidget {
     required this.language,
     this.store,
     this.launcher,
+    this.onLaunched,
   });
 
   final String language;
   final RdpProfileStore? store;
   final RdpLauncher? launcher;
+  final ValueChanged<String>? onLaunched;
 
   @override
-  State<RdpWorkspace> createState() => _RdpWorkspaceState();
+  RdpWorkspaceState createState() => RdpWorkspaceState();
 }
 
-class _RdpWorkspaceState extends State<RdpWorkspace> {
+class RdpWorkspaceState extends State<RdpWorkspace> {
   late final _store = widget.store ?? RdpProfileStore();
   late final _launcher = widget.launcher ?? RdpLauncher();
   List<RdpProfile> _profiles = [];
@@ -37,10 +39,10 @@ class _RdpWorkspaceState extends State<RdpWorkspace> {
   @override
   void initState() {
     super.initState();
-    _load();
+    refreshProfiles();
   }
 
-  Future<void> _load() async {
+  Future<void> refreshProfiles() async {
     setState(() {
       _loading = true;
       _loadFailed = false;
@@ -112,6 +114,7 @@ class _RdpWorkspaceState extends State<RdpWorkspace> {
       _notify(_text('Opened Windows Remote Desktop Connection.',
           'Клиент удалённых рабочих столов Windows запущен.'));
       unawaited(_watchClient(client.exitCode));
+      widget.onLaunched?.call(profile.id);
     } catch (_) {
       _notify(_text('Could not start the Windows RDP client.',
           'Не удалось запустить клиент RDP Windows.'));
@@ -169,7 +172,8 @@ class _RdpWorkspaceState extends State<RdpWorkspace> {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
-                onPressed: _load, child: Text(_text('Retry', 'Повторить'))),
+                onPressed: refreshProfiles,
+                child: Text(_text('Retry', 'Повторить'))),
           ),
         ] else if (_profiles.isEmpty)
           Text(_text('Add a profile for a Windows server or workstation.',
