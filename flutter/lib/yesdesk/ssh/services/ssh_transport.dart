@@ -342,7 +342,9 @@ class SshRun {
     _dial = task;
     if (ended) task.cancel();
     try {
-      final socket = _TcpSshSocket(await task.socket);
+      final tcp = await task.socket;
+      tcp.setOption(SocketOption.tcpNoDelay, true);
+      final socket = _TcpSshSocket(tcp);
       if (ended) {
         socket.destroy();
         throw const _SshCancelled();

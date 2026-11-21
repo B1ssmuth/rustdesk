@@ -155,15 +155,29 @@ class SftpFiles {
       }
       if (!await confirm(target)) throw const TransferCancelled();
     }
-    await _write(target, source.openRead().map(Uint8List.fromList),
-        initial.size, existing, progress, () async {
+    await _write(target, _readLocal(source), initial.size, existing, progress,
+        () async {
       final after = await source.stat();
       if (after.size != initial.size ||
           after.modified != initial.modified ||
+          after.changed != initial.changed ||
           _version(await _stat(target)) != _version(existing)) {
         throw const FileOperationError(FileProblem.changed);
       }
     });
+  }
+
+  Stream<Uint8List> _readLocal(File source) async* {
+    final file = await source.open();
+    try {
+      while (true) {
+        final block = await file.read(512 * 1024);
+        if (block.isEmpty) break;
+        yield block;
+      }
+    } finally {
+      await file.close();
+    }
   }
 
   Future<void> _write(
@@ -291,8 +305,7 @@ class SftpFiles {
     if (!p.equals(await local.directory(directory), p.dirname(target))) {
       throw const FileOperationError(FileProblem.changed);
     }
-    final staging =
-        await Directory(p.join(p.dirname(target), '.yesdesk-')).createTemp();
+    final staging = await Directory(p.dirname(target)).createTemp('.yesdesk-');
     final temporary = File(p.join(staging.path, 'download.part'));
     try {
       final file = await request(client.open(source));
