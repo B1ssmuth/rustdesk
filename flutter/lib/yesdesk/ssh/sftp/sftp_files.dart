@@ -315,8 +315,13 @@ class SftpFiles {
         }
         final output = await temporary.open(mode: FileMode.write);
         try {
-          final stream =
-              file.read(length: length, maxPendingRequests: 8).timeout(timeout);
+          final stream = file
+              .read(
+                length: length,
+                chunkSize: 64 * 1024,
+                maxPendingRequests: 16,
+              )
+              .timeout(timeout);
           await for (final chunk in stream) {
             progress.check();
             await output.writeFrom(chunk);

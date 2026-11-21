@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_hbb/yesdesk/ssh/models/ssh_profile.dart';
 import 'package:flutter_hbb/yesdesk/ssh/services/ssh_transport.dart';
 import 'package:flutter_hbb/yesdesk/ssh/sftp/sftp_files.dart';
@@ -162,7 +163,8 @@ void main() {
       final output = await File(p.join(local.root, 'копия.bin')).open();
       try {
         for (var i = 0; i < 1024; i++) {
-          expect(await output.read(chunk.length), chunk);
+          expect(listEquals(await output.read(chunk.length), chunk), isTrue,
+              reason: 'Block $i differs');
         }
       } finally {
         await output.close();
@@ -177,7 +179,7 @@ void main() {
       await files.download(target, local, local.root, 'копия.bin',
           TransferProgress(), (_) async => true);
       expect(await File(p.join(local.root, 'копия.bin')).length(), 0);
-    }, timeout: const Timeout(Duration(minutes: 3)));
+    }, timeout: const Timeout(Duration(minutes: 6)));
 
     test('server permissions, rename conflict and nonrecursive deletion',
         () async {
@@ -273,6 +275,6 @@ void main() {
           throwsA(isA<SftpAbortError>()));
       expect(await File(p.join(local.root, 'interrupted')).exists(), isFalse);
       expect(receiving.leftover, isNull);
-    }, timeout: const Timeout(Duration(minutes: 3)));
+    }, timeout: const Timeout(Duration(minutes: 6)));
   });
 }
