@@ -24,17 +24,21 @@ class SshWorkspace extends StatefulWidget {
     required this.language,
     this.repository,
     this.secrets = const SystemSshSecretStore(),
+    this.onSessionChanged,
+    this.onConnected,
   });
 
   final String language;
   final SshRepository? repository;
   final SshSecretStore secrets;
+  final VoidCallback? onSessionChanged;
+  final ValueChanged<String>? onConnected;
 
   @override
-  State<SshWorkspace> createState() => _SshWorkspaceState();
+  SshWorkspaceState createState() => SshWorkspaceState();
 }
 
-class _SshWorkspaceState extends State<SshWorkspace> {
+class SshWorkspaceState extends State<SshWorkspace> {
   late final _repository = widget.repository ?? SshRepository();
   final _tabs = <SshTab>[];
   List<SshProfile> _profiles = [];
@@ -51,7 +55,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
   @override
   void initState() {
     super.initState();
-    unawaited(_load());
+    unawaited(refreshProfiles());
   }
 
   @override
@@ -62,7 +66,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> refreshProfiles() async {
     try {
       final data = await _repository.load();
       if (!mounted) return;
@@ -121,7 +125,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
   Future<void> _update(Future<void> Function() operation) async {
     try {
       await operation();
-      if (mounted) await _load();
+      if (mounted) await refreshProfiles();
     } catch (_) {
       _notice(l.text(
           'Could not save SSH settings', 'Не удалось сохранить настройки SSH'));
@@ -159,7 +163,10 @@ class _SshWorkspaceState extends State<SshWorkspace> {
     final profile = tab.profile;
     final current = _latest(profile);
     SshCredential? saved;
-    if (current.endpoint == profile.endpoint &&
+    final matchesProfileType = tab.filesOnly == profile.filesOnly;
+    if (matchesProfileType &&
+        current.filesOnly == profile.filesOnly &&
+        current.endpoint == profile.endpoint &&
         current.username == profile.username &&
         current.auth == profile.auth &&
         current.secretRef != null) {
@@ -183,7 +190,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
               labels: l,
               destination: '${profile.username}@${profile.endpoint}',
               privateKey: privateKey,
-              canPersist: _secrets.canPersist,
+              canPersist: matchesProfileType && _secrets.canPersist,
               saved: saved,
             ),
         ended: ended);
@@ -207,7 +214,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
       final result = await _repository.attachSecret(profile, reference);
       if (result.saved) {
         _forget(result.previous);
-        if (mounted) await _load();
+        if (mounted) await refreshProfiles();
       } else {
         _forget(reference, notify: false);
       }
@@ -309,8 +316,31 @@ class _SshWorkspaceState extends State<SshWorkspace> {
     ));
   }
 
-  void _open(SshProfile profile, {bool filesOnly = false}) {
-    final tab = SshTab(profile, _repository, filesOnly: filesOnly);
+  int activeCount(String id, {required bool filesOnly}) => _tabs
+      .where((tab) =>
+          tab.profile.id == id &&
+          tab.filesOnly == filesOnly &&
+          tab.phase == SshPhase.active)
+      .length;
+
+  bool isConnecting(String id, {required bool filesOnly}) => _tabs.any((tab) =>
+      tab.profile.id == id &&
+      tab.filesOnly == filesOnly &&
+      tab.busy &&
+      tab.phase != SshPhase.active);
+
+  void openProfile(SshProfile profile, {bool? filesOnly}) {
+    final tab =
+        SshTab(profile, _repository, filesOnly: filesOnly ?? profile.filesOnly);
+    var previousPhase = tab.phase;
+    tab.addListener(() {
+      if (previousPhase == tab.phase) return;
+      previousPhase = tab.phase;
+      if (tab.phase == SshPhase.active && tab.filesOnly == profile.filesOnly) {
+        widget.onConnected?.call(profile.id);
+      }
+      widget.onSessionChanged?.call();
+    });
     setState(() {
       _tabs.add(tab);
       _current = tab;
@@ -337,6 +367,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
       if (_tabs.isEmpty) _showProfiles = true;
     });
     tab.dispose();
+    widget.onSessionChanged?.call();
   }
 
   Future<void> _rename(SshTab tab) async {
@@ -363,14 +394,15 @@ class _SshWorkspaceState extends State<SshWorkspace> {
         dense: true,
         leading:
             profile.favorite ? const Icon(Icons.star_outline, size: 18) : null,
-        title: Text(profile.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Text(profile.filesOnly ? "${profile.name} · SFTP" : profile.name,
+            maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text('${profile.username}@${profile.endpoint}',
             maxLines: 1, overflow: TextOverflow.ellipsis),
-        onTap: () => _open(profile),
+        onTap: () => openProfile(profile),
         trailing: PopupMenuButton<String>(
           tooltip: l.text('Connection actions', 'Действия подключения'),
           onSelected: (action) {
-            if (action == 'sftp') _open(profile, filesOnly: true);
+            if (action == 'sftp') openProfile(profile, filesOnly: true);
             if (action == 'edit') unawaited(_edit(profile));
             if (action == 'delete') unawaited(_delete(profile));
             if (action == 'favorite') {
@@ -379,10 +411,11 @@ class _SshWorkspaceState extends State<SshWorkspace> {
             }
           },
           itemBuilder: (_) => [
-            PopupMenuItem(
-                value: 'sftp',
-                child:
-                    Text(l.text('Open SFTP session', 'Открыть SFTP-сессию'))),
+            if (!profile.filesOnly)
+              PopupMenuItem(
+                  value: 'sftp',
+                  child:
+                      Text(l.text('Open SFTP session', 'Открыть SFTP-сессию'))),
             PopupMenuItem(value: 'edit', child: Text(l.edit)),
             PopupMenuItem(
                 value: 'favorite',
@@ -438,7 +471,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
                 : _loadFailed
                     ? Center(
                         child: TextButton(
-                        onPressed: _load,
+                        onPressed: refreshProfiles,
                         child: Text(l.text('Could not load servers. Retry',
                             'Не удалось загрузить серверы. Повторить')),
                       ))
@@ -501,7 +534,7 @@ class _SshWorkspaceState extends State<SshWorkspace> {
                     child: Text(l.cancel))
               ],
             ));
-    if (mounted && profile != null) _open(profile);
+    if (mounted && profile != null) openProfile(profile);
   }
 
   Future<void> _forgetHostKey(SshTab tab, SshHostKey expected) async {
