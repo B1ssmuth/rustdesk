@@ -14,6 +14,8 @@ The installed Windows agent has no redemption or trusted consent UI in this spri
 
 ## Native trust requirements
 
+The existing `Client::secure_connection` in `src/client.rs` can continue the ordinary handshake without a validated rendezvous signing key. A corporate path must abort in that case and when peer verification or key establishment fails. The current RustDesk handshake has no authenticated corporate channel binding exposed to the service. Do not derive such a binding from the device ID or the lab fixture.
+
 Before enabling the catalog action, negotiate a versioned corporate path on both RustDesk peers. Bind issuance and redemption to proof of possession by the initiating client and to a challenge derived from the specific authenticated RustDesk channel. Require a separately enrolled endpoint identity and a secure service-mediated prompt in the active Windows session. A malicious desktop process must be unable to supply consent through IPC. Authorize only once after the local decision and server redemption both succeed.
 
 Enforce capability restrictions at the receiving service throughout a corporate session. View access permits video only. Any future control policy must independently authorize input and exclude elevation, secure desktop, system dialogs, file transfer, clipboard and terminal. Terminate corporate sessions when the authorization lease expires or when policy revocation is confirmed. Unattended requires explicit organization policy, verified domain identity and a local setting restricted to authorized administrators. Leave both modes blocked until endpoint enforcement and lifetime checks exist.
