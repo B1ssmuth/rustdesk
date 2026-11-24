@@ -38,8 +38,6 @@ void main() {
     );
   });
   tearDown(() async {
-    // Wait for queued catalog writes to release their Windows file handles.
-    await repository.load();
     await root.delete(recursive: true);
   });
 
@@ -102,6 +100,12 @@ void main() {
         tester, () => find.byType(LinearProgressIndicator).evaluate().isEmpty);
     await tester.pumpAndSettle();
     expect(launches, ['123456789/false']);
+
+    // Drain connection history writes while the widget's test clock can still run.
+    await tester.pumpWidget(const SizedBox.shrink());
+    var catalogIdle = false;
+    repository.load().then((_) => catalogIdle = true);
+    await pumpUntil(tester, () => catalogIdle);
   });
 
   testWidgets(
