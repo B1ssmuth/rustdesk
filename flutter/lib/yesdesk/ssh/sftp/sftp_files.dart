@@ -12,6 +12,7 @@ import 'package:win32/win32.dart';
 
 enum FileProblem {
   invalidName,
+  alreadyExists,
   changed,
   unsafeType,
   noAtomicReplace,
@@ -129,6 +130,24 @@ class SftpFiles {
           attrs.userID,
           attrs.groupID
         );
+
+  Future<String> createEmptyFile(String directory, String name) async {
+    final path = remoteChild(directory, name);
+    try {
+      final handle = await request(client.open(path,
+          mode: SftpFileOpenMode.write |
+              SftpFileOpenMode.create |
+              SftpFileOpenMode.exclusive));
+      await request(handle.close());
+      return path;
+    } on SftpStatusError catch (error) {
+      // SFTP v3 commonly reports an exclusive-open conflict as FAILURE.
+      if (error.code == SftpStatusCode.failure && await _stat(path) != null) {
+        throw const FileOperationError(FileProblem.alreadyExists);
+      }
+      rethrow;
+    }
+  }
 
   Future<void> rename(String source, String target) =>
       request(client.rename(source, target, replace: false));

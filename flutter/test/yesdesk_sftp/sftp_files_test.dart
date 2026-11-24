@@ -120,6 +120,24 @@ void main() {
   group('Container OpenSSH',
       skip: _port == null ? 'Run scripts/test-yesdesk-sftp-openssh.sh' : false,
       () {
+    test('exclusive create produces an empty file and preserves existing data',
+        () async {
+      final (_, files, parent) = await workspace();
+      final path = await files.createEmptyFile(parent, 'notes.txt');
+      final empty = await files.readText(path);
+      expect(empty.original, isEmpty);
+      await files.saveText(empty, 'keep me', TransferProgress());
+      await expectLater(
+          files.createEmptyFile(parent, 'notes.txt'),
+          throwsA(isA<FileOperationError>().having(
+              (error) => error.problem, 'problem', FileProblem.alreadyExists)));
+      expect((await files.readText(path)).original, 'keep me');
+      await expectLater(
+          files.createEmptyFile(parent, '../escape'),
+          throwsA(isA<FileOperationError>().having(
+              (error) => error.problem, 'problem', FileProblem.invalidName)));
+    });
+
     test('channel close and subsystem rejection leave the terminal connected',
         () async {
       final output = StringBuffer();

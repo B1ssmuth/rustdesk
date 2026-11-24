@@ -191,6 +191,9 @@ class _SftpExplorerState extends State<SftpExplorer> {
   String _message(Object error) => switch (error) {
         FileOperationError(problem: FileProblem.invalidName) => l.text(
             'Invalid or unsafe path', 'Недопустимый или небезопасный путь'),
+        FileOperationError(problem: FileProblem.alreadyExists) => l.text(
+            'An item with this name already exists.',
+            'Элемент с таким именем уже существует.'),
         FileOperationError(problem: FileProblem.changed) => l.text(
             'File or directory changed. Refresh and try again.',
             'Файл или каталог изменился. Обновите список и повторите.'),
@@ -391,6 +394,49 @@ class _SftpExplorerState extends State<SftpExplorer> {
     if (mounted && _loadedPath == parent) await _navigate(parent);
   }
 
+  Future<void> _createFile() async {
+    final files = _files;
+    final parent = _loadedPath;
+    if (files == null) return;
+    final name =
+        await sshTextDialog(context, l, l.text('New file', 'Новый файл'));
+    if (!mounted || name == null || !identical(files, _files)) return;
+    String? path;
+    await _remote(() async {
+      path = await files.createEmptyFile(parent, name);
+    });
+    if (!mounted || !identical(files, _files) || path == null) return;
+    if (_loadedPath == parent) await _navigate(parent);
+    if (!mounted || !identical(files, _files)) return;
+    final edit = await sshConfirm(
+        context,
+        l,
+        l.text('Open the new file in the text editor?',
+            'Открыть новый файл в текстовом редакторе?'),
+        l.text('Open', 'Открыть'),
+        ended: Future.any([_channelEnded.future, widget.run.done]));
+    if (!mounted || !edit || !identical(files, _files)) return;
+    await _editText(files, path!, parent);
+  }
+
+  Future<void> _editText(SftpFiles files, String path, String parent) async {
+    await _remote(() async {
+      final original = await files.readText(path);
+      if (!mounted || !identical(files, _files)) return;
+      await sshDialog<void>(
+          context,
+          (_) => _TextEditor(
+                files: files,
+                original: original,
+                labels: l,
+                message: _message,
+              ));
+    });
+    if (mounted && identical(files, _files) && _loadedPath == parent) {
+      await _navigate(parent);
+    }
+  }
+
   Future<void> _delete(Iterable<SftpName> entries) async {
     final files = _files;
     final parent = _loadedPath;
@@ -463,19 +509,7 @@ class _SftpExplorerState extends State<SftpExplorer> {
                   ));
         });
       case _Action.edit:
-        await _remote(() async {
-          final original = await files.readText(path);
-          if (!mounted) return;
-          await sshDialog<void>(
-              context,
-              (_) => _TextEditor(
-                    files: files,
-                    original: original,
-                    labels: l,
-                    message: _message,
-                  ));
-        });
-        if (mounted && _loadedPath == parent) await _navigate(parent);
+        await _editText(files, path, parent);
     }
   }
 
@@ -582,6 +616,10 @@ class _SftpExplorerState extends State<SftpExplorer> {
                     label: l.text('New directory', 'Новый каталог'),
                     icon: Icons.create_new_folder_outlined,
                     onPressed: _busy ? null : _mkdir),
+                YesDeskIconButton(
+                    label: l.text('New file', 'Новый файл'),
+                    icon: Icons.note_add_outlined,
+                    onPressed: _busy ? null : _createFile),
               ]),
               Row(children: [
                 Expanded(
