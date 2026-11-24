@@ -1,0 +1,80 @@
+{
+  "vs": {
+    "version": "17.14.44",
+    "file": "vs_BuildTools-17.14.44.exe",
+    "url": "https://download.visualstudio.microsoft.com/download/pr/6bd63d7f-1818-4e03-a552-9feb11496c19/5dc747350fb0589f908915c7b5fa52ec22d22b37ae2e5f4964d83519667498b2/vs_BuildTools.exe",
+    "sha256": "5dc747350fb0589f908915c7b5fa52ec22d22b37ae2e5f4964d83519667498b2"
+  },
+  "rustup": {
+    "version": "1.28.2",
+    "file": "rustup-init.exe",
+    "url": "https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-pc-windows-msvc/rustup-init.exe",
+    "sha256": "88d8258dcf6ae4f7a80c7d1088e1f36fa7025a1cfd1343731b4ee6f385121fc0"
+  },
+  "rustupLinux": {
+    "version": "1.28.2",
+    "file": "rustup-init",
+    "url": "https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init",
+    "sha256": "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c"
+  },
+  "flutter": {
+    "version": "3.24.5",
+    "file": "flutter_windows_3.24.5-stable.zip",
+    "url": "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.24.5-stable.zip",
+    "sha256": "b8a7485acd3c6fb23a76b7ac09f89e8d93d62fbff7147c6f5f8c5686d949eeac"
+  },
+  "flutterLinux": {
+    "version": "3.22.3",
+    "file": "flutter_linux_3.22.3-stable.tar.xz",
+    "url": "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.22.3-stable.tar.xz",
+    "sha256": "9c5f70ba118b9163552144901a2efd91d40b22a68a04e67271d6a5ad936e8368"
+  },
+  "llvm": {
+    "version": "15.0.6",
+    "file": "LLVM-15.0.6-win64.exe",
+    "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-15.0.6/LLVM-15.0.6-win64.exe",
+    "sha256": "22e2f2c38be4c44db7a1e9da5e67de2a453c5b4be9cf91e139592a63877ac0a2"
+  },
+  "python": {
+    "version": "3.12.10",
+    "file": "python.3.12.10.nupkg",
+    "url": "https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.10.nupkg",
+    "sha256": "0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8"
+  },
+  "brotli": {
+    "version": "1.1.0",
+    "file": "Brotli-1.1.0-cp312-cp312-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/3d/d5/942051b45a9e883b5b6e98c041698b1eb2012d25e5948c58d6bf85b1bb43/Brotli-1.1.0-cp312-cp312-win_amd64.whl",
+    "sha256": "906bc3a79de8c4ae5b86d3d75a8b77e44404b0f4261714306e3ad248d8ab0951"
+  },
+  "nuget": {
+    "version": "6.14.0",
+    "file": "nuget-6.14.0.exe",
+    "url": "https://dist.nuget.org/win-x86-commandline/v6.14.0/nuget.exe",
+    "sha256": "92dbed160ddee0f64b901e907439e021211b428e57c089ecc12fc38dcc4bd9a5"
+  },
+  "dotnet": {
+    "version": "8.0.428",
+    "file": "dotnet-sdk-8.0.428-win-x64.zip",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/8.0.428/dotnet-sdk-8.0.428-win-x64.zip",
+    "sha256": "3528049a139fa0e336e340c82c1266532f497a4ba439747eca647078691c49c5"
+  },
+  "vcpkg": {
+    "version": "2025-07-21",
+    "file": "vcpkg.exe",
+    "url": "https://github.com/microsoft/vcpkg-tool/releases/download/2025-07-21/vcpkg.exe",
+    "sha256": "df8a0cba47ec0aff33ea377b66a5eef7397f8455a082a4dfad881fcc280e096d"
+  },
+  "engine": {
+    "version": "210168939",
+    "file": "windows-x64-release.zip",
+    "url": "https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip",
+    "sha256": "ec8cabf36ee4ff24c8d98de25b00e70781eb03876265aee84d0fe554a110036e"
+  },
+  "driver": {
+    "version": "usbmmidd_v2",
+    "file": "usbmmidd_v2.zip",
+    "url": "https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip",
+    "sha256": "629b51e9944762bae73948171c65d09a79595cf4c771a82ebc003fbba5b24f51"
+  }
+}
