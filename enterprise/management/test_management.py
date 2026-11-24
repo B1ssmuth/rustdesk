@@ -42,6 +42,8 @@ class ContractTests(unittest.TestCase):
 class PostgresTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if psycopg.conninfo.conninfo_to_dict(database_url()).get("dbname") != "yesdesk_enterprise_test":
+            raise ValueError("Use the disposable yesdesk_enterprise_test database for this suite")
         cls.key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         migrate()
         migrate()
@@ -87,6 +89,9 @@ class PostgresTests(unittest.TestCase):
             self.snapshot["employees"][0]["group_dns"] = [GROUPS["user"]]
             apply_directory(db, self.snapshot)
         self.assertEqual(self.client.get("/v1/employees", headers=self.headers()).status_code, 403)
+        with psycopg.connect(database_url()) as db:
+            db.execute("UPDATE directory_snapshot SET imported_at=now() - interval '2 hours'")
+        self.assertEqual(self.client.get("/v1/me", headers=self.headers("staff")).status_code, 403)
 
     def test_employee_device_session_and_fail_closed_connection(self):
         enrollment = {"device_id": self.device, "enrollment_code": self.code}

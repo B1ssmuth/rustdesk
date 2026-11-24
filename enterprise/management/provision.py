@@ -28,6 +28,8 @@ def apply_directory(db, snapshot):
         for group_dn in set(employee["group_dns"]):
             db.execute("INSERT INTO employee_groups (employee_sid, group_dn) VALUES (%s,%s)",
                        (employee["sid"], group_dn))
+    db.execute("INSERT INTO directory_snapshot VALUES (true, clock_timestamp()) "
+               "ON CONFLICT (singleton) DO UPDATE SET imported_at=excluded.imported_at")
     db.execute(
         "INSERT INTO audit (actor,action,target,outcome) VALUES "
         "(session_user,'replace_directory','employees','allowed')",

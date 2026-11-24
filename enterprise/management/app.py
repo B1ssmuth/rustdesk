@@ -114,9 +114,11 @@ def role_for(groups, dns):
     return None
 
 
-def create_app(issuer, audience, jwks_url, groups, test_agents=False):
+def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_max_age=1800):
     if not all(groups.values()) or len(set(groups.values())) != 3:
         raise ValueError("Configure three distinct AD group DNs")
+    if not 60 <= directory_max_age <= 3600:
+        raise ValueError("Directory snapshot lifetime must be between 60 and 3600 seconds")
     app = FastAPI(title="YES Desk Management", version="3.0.0")
     jwks = jwt.PyJWKClient(jwks_url, timeout=5, lifespan=120)
     bearer = HTTPBearer()
@@ -150,7 +152,9 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False):
             raise HTTPException(401, "Invalid access token lifetime")
         sid = db.execute(
             "SELECT sid, username, display_name, department FROM employees "
-            "WHERE subject = %s AND enabled", (claims["sub"],),
+            "WHERE subject = %s AND enabled AND EXISTS (SELECT 1 FROM directory_snapshot "
+            "WHERE imported_at > now() - make_interval(secs => %s))",
+            (claims["sub"], directory_max_age),
         ).fetchone()
         if sid is None:
             raise HTTPException(403, "Corporate identity is not provisioned")
@@ -193,7 +197,7 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False):
     @app.get("/health/ready")
     def ready(db: Db):
         if not db.execute(
-            "SELECT 1 FROM schema_migrations WHERE name = '001_foundation.sql'"
+            "SELECT 1 FROM schema_migrations WHERE name = '002_directory_snapshot.sql'"
         ).fetchone():
             raise HTTPException(503, "Database migration required")
         return {"status": "ok"}
@@ -317,7 +321,7 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False):
         )
         return {"status": "ok"}
 
-    @app.post("/v1/devices/{device_id}/connection", responses={
+    @app.post("/v1/devices/{device_id}/connection", status_code=501, responses={
         403: {"description": "Role, grant or device verification failed"},
         501: {"description": "Endpoint enforcement is unavailable"},
     })
@@ -344,4 +348,5 @@ def production_app():
     groups = {role: os.environ[f"YESDESK_{role.upper()}_DN"] for role in ("admin", "support", "user")}
     return create_app(https_url("YESDESK_ISSUER"), os.environ["YESDESK_AUDIENCE"],
                       https_url("YESDESK_JWKS_URL"), groups,
-                      test_agents=os.environ.get("YESDESK_ENV") == "test")
+                      test_agents=os.environ.get("YESDESK_ENV") == "test",
+                      directory_max_age=int(os.environ.get("YESDESK_DIRECTORY_MAX_AGE", "1800")))
