@@ -94,12 +94,7 @@ with tarfile.open(archive) as snapshot:
             throw 'The resumed run is missing the resolved Flutter package configuration.'
         }
     } else {
-        Push-Location -LiteralPath (Join-Path $source 'flutter')
-        try {
-            Invoke-BuildCommand $layout.FlutterExe @('pub', 'get', '--enforce-lockfile')
-        } finally {
-            Pop-Location
-        }
+        Invoke-WindowsFlutterPubGet $layout $source
         if ($BridgeMode -eq 'Native') {
             Invoke-NativeBridge $layout $source
         } else {
