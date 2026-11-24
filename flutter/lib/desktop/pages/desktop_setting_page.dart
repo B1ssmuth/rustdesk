@@ -16,6 +16,7 @@ import 'package:flutter_hbb/mobile/widgets/dialog.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/printer_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
+import 'package:flutter_hbb/yesdesk/enterprise/corporate_account.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/plugin/manager.dart';
 import 'package:flutter_hbb/plugin/widgets/desktop_settings.dart';
@@ -2024,7 +2025,12 @@ class _AccountState extends State<_Account> {
     return ListView(
       controller: scrollController,
       children: [
-        _Card(title: 'Account', children: [accountAction(), useInfo()]),
+        _Card(
+          title: 'Account',
+          children: isWindows
+              ? [const CorporateAccount()]
+              : [accountAction(), useInfo()],
+        ),
       ],
     ).marginOnly(bottom: _kListViewBottomMargin);
   }

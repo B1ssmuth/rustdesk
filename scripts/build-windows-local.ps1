@@ -9,12 +9,26 @@ param(
     [Parameter(ParameterSetName = 'Diagnostic')][switch] $Diagnostic,
     [Parameter(Mandatory, ParameterSetName = 'Build')][switch] $Build,
     [Parameter(ParameterSetName = 'Build')][string] $ResumeRun,
+    [Parameter(ParameterSetName = 'Build')][string] $EnterpriseConfig,
     [Parameter(Mandatory, ParameterSetName = 'Bridge')][switch] $BridgeOnly
 )
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 . (Join-Path $PSScriptRoot 'windows-build-common.ps1')
+$flutterBuildArguments = @('build', 'windows', '--release', '--no-pub', '-v')
+if ($EnterpriseConfig) {
+    $configPath = (Resolve-Path -LiteralPath $EnterpriseConfig).Path
+    $clientConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+    $allowedKeys = @('YESDESK_MANAGEMENT_URL', 'YESDESK_OIDC_AUTHORIZE', 'YESDESK_OIDC_TOKEN',
+        'YESDESK_OIDC_CLIENT_ID', 'YESDESK_OIDC_SCOPE')
+    foreach ($key in $clientConfig.Keys) {
+        if ($key -notin $allowedKeys -or $clientConfig[$key] -isnot [string]) {
+            throw "Unexpected public corporate client configuration key: $key."
+        }
+    }
+    $flutterBuildArguments += "--dart-define-from-file=$configPath"
+}
 . (Join-Path $PSScriptRoot 'windows-build-bridge.ps1')
 . (Join-Path $PSScriptRoot 'windows-build-verify.ps1')
 
@@ -132,7 +146,7 @@ with tarfile.open(archive) as snapshot:
         Assert-X64Executable $virtualDisplay
         Push-Location -LiteralPath (Join-Path $source 'flutter')
         try {
-            Invoke-BuildCommand $layout.FlutterExe @('build', 'windows', '--release', '--no-pub', '-v')
+            Invoke-BuildCommand $layout.FlutterExe $flutterBuildArguments
         } finally {
             Pop-Location
         }

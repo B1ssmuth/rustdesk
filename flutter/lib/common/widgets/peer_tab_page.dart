@@ -22,6 +22,7 @@ import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/yesdesk/connections/desktop_connections_stub.dart'
     if (dart.library.io) 'package:flutter_hbb/yesdesk/connections/desktop_connections.dart';
 import 'package:flutter_hbb/yesdesk/ssh/widgets/ssh_strings.dart';
+import 'package:flutter_hbb/yesdesk/enterprise/corporate_session.dart';
 import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:flutter_hbb/yesdesk/widgets.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -101,6 +102,9 @@ class _PeerTabPageState extends State<PeerTabPage>
   }
 
   void _openSection(_WorkspaceSection section) {
+    if (isWindows &&
+        section != _WorkspaceSection.devices &&
+        !corporateSession.isAdmin) return;
     FocusManager.instance.primaryFocus?.unfocus();
     if (section == _WorkspaceSection.ssh) _connections.refreshSsh();
     if (section == _WorkspaceSection.rdp) _connections.refreshRdp();
@@ -152,7 +156,10 @@ class _PeerTabPageState extends State<PeerTabPage>
     final model = Provider.of<PeerTabModel>(context);
     final workspaceHeader = widget.workspaceHeader;
     if (workspaceHeader != null) {
-      return _buildWorkspace(model, workspaceHeader);
+      return ListenableBuilder(
+        listenable: corporateSession,
+        builder: (context, _) => _buildWorkspace(model, workspaceHeader),
+      );
     }
 
     Widget selectionWrap(Widget widget) {
@@ -249,17 +256,20 @@ class _PeerTabPageState extends State<PeerTabPage>
   Widget _buildWorkspace(PeerTabModel model, Widget header) {
     final colors = YesDeskColors.of(context);
     final tabs = model.visibleEnabledOrderedIndexs;
-    final supportsSsh = isDesktop && !isWeb;
+    final desktop = isDesktop && !isWeb;
+    final professional = !isWindows || corporateSession.isAdmin;
+    final supportsSsh = desktop && professional;
     final supportsRdp = supportsSsh && isWindows && !bind.isIncomingOnly();
-    final language = supportsSsh ? bind.mainGetLocalOption(key: 'lang') : '';
+    final language = desktop ? bind.mainGetLocalOption(key: 'lang') : '';
     final workspaceLanguage =
         language.isEmpty ? localeName.toString() : language;
     final labels = SshStrings(workspaceLanguage);
     final tabFixed = isOptionFixed(kOptionPeerTabIndex);
-    final devicesSelected = _section == _WorkspaceSection.devices;
-    final sshSelected = _section == _WorkspaceSection.ssh;
-    final rdpSelected = _section == _WorkspaceSection.rdp;
-    final catalogSelected = _section == _WorkspaceSection.catalog;
+    final section = professional ? _section : _WorkspaceSection.devices;
+    final devicesSelected = section == _WorkspaceSection.devices;
+    final sshSelected = section == _WorkspaceSection.ssh;
+    final rdpSelected = section == _WorkspaceSection.rdp;
+    final catalogSelected = section == _WorkspaceSection.catalog;
     return LayoutBuilder(builder: (context, constraints) {
       final compact =
           _sidebar == _SidebarMode.compact || constraints.maxWidth < 690;
@@ -401,7 +411,7 @@ class _PeerTabPageState extends State<PeerTabPage>
                 ),
                 Expanded(
                   child: IndexedStack(
-                    index: _section.index,
+                    index: section.index,
                     sizing: StackFit.expand,
                     children: [
                       ExcludeFocus(
@@ -453,21 +463,21 @@ class _PeerTabPageState extends State<PeerTabPage>
                           );
                         }),
                       ),
-                      if (_visited.contains(_WorkspaceSection.ssh))
+                      if (professional && _visited.contains(_WorkspaceSection.ssh))
                         ExcludeFocus(
                           excluding: !sshSelected,
                           child: _connections.ssh(workspaceLanguage),
                         )
                       else
                         const SizedBox.shrink(),
-                      if (_visited.contains(_WorkspaceSection.rdp))
+                      if (professional && _visited.contains(_WorkspaceSection.rdp))
                         ExcludeFocus(
                           excluding: !rdpSelected,
                           child: _connections.rdp(workspaceLanguage),
                         )
                       else
                         const SizedBox.shrink(),
-                      if (_visited.contains(_WorkspaceSection.catalog))
+                      if (professional && _visited.contains(_WorkspaceSection.catalog))
                         ExcludeFocus(
                           excluding: !catalogSelected,
                           child: _connections.catalog(workspaceLanguage,
