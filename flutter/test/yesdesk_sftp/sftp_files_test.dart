@@ -50,6 +50,34 @@ void main() {
         '/home/Файл с пробелом.txt');
   });
 
+  test('remote creation rejects traversal and Windows aliases before I/O',
+      () async {
+    final files = SftpFiles(_NoSftpRequests(), _timeout);
+    for (final name in ['', '.', '..', '../x', r'..\x', 'a:b', 'NUL.txt']) {
+      await expectLater(
+          files.createEmptyFile('/remote', name),
+          throwsA(isA<FileOperationError>().having(
+              (error) => error.problem, 'problem', FileProblem.invalidName)));
+    }
+  });
+
+  test('remote creation propagates the server permission-denied status',
+      () async {
+    final client = _DenySftpCreate();
+    final files = SftpFiles(client, _timeout);
+    await expectLater(
+        files.createEmptyFile('/remote', 'note.txt'),
+        throwsA(isA<SftpStatusError>().having(
+            (error) => error.code, 'code', SftpStatusCode.permissionDenied)));
+    expect(client.path, '/remote/note.txt');
+    expect(
+        client.mode!.flag,
+        (SftpFileOpenMode.write |
+                SftpFileOpenMode.create |
+                SftpFileOpenMode.exclusive)
+            .flag);
+  });
+
   test('local root rejects a link to a directory outside it', () async {
     final outside =
         await Directory.systemTemp.createTemp('yesdesk-sftp-outside-');
@@ -321,4 +349,20 @@ void main() {
       expect(receiving.leftover, isNull);
     }, timeout: const Timeout(Duration(minutes: 6)));
   });
+}
+
+class _NoSftpRequests extends Fake implements SftpClient {}
+
+class _DenySftpCreate extends _NoSftpRequests {
+  String? path;
+  SftpFileOpenMode? mode;
+
+  @override
+  Future<SftpFile> open(String path,
+      {SftpFileOpenMode mode = SftpFileOpenMode.read,
+      SftpFileAttrs? attrs}) async {
+    this.path = path;
+    this.mode = mode;
+    throw SftpStatusError(SftpStatusCode.permissionDenied, 'denied');
+  }
 }

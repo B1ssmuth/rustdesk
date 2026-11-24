@@ -57,6 +57,22 @@ String remoteChild(String directory, String name) {
   return p.posix.join(directory, name);
 }
 
+// A server may be Windows, where backslashes and alternate streams are
+// interpreted as paths rather than ordinary characters in a new name.
+void _validatePortableName(String name) {
+  if (name.isEmpty ||
+      name == '.' ||
+      name == '..' ||
+      RegExp(r'[<>:"/\\|?*\x00-\x1f]').hasMatch(name) ||
+      name.endsWith('.') ||
+      name.endsWith(' ') ||
+      RegExp(r'^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$',
+              caseSensitive: false)
+          .hasMatch(name.split('.').first.trimRight())) {
+    throw const FileOperationError(FileProblem.invalidName);
+  }
+}
+
 /// A directory explicitly chosen by the operator. Navigation and downloads
 /// use canonical directories beneath this root and never follow file links.
 class LocalFiles {
@@ -75,18 +91,7 @@ class LocalFiles {
   }
 
   Future<String> child(String parent, String name) async {
-    // Reject Windows device names and alternate data streams on every host.
-    if (name.isEmpty ||
-        name == '.' ||
-        name == '..' ||
-        RegExp(r'[<>:"/\\|?*\x00-\x1f]').hasMatch(name) ||
-        name.endsWith('.') ||
-        name.endsWith(' ') ||
-        RegExp(r'^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$',
-                caseSensitive: false)
-            .hasMatch(name.split('.').first.trimRight())) {
-      throw const FileOperationError(FileProblem.invalidName);
-    }
+    _validatePortableName(name);
     return p.join(await directory(parent), name);
   }
 }
@@ -132,6 +137,7 @@ class SftpFiles {
         );
 
   Future<String> createEmptyFile(String directory, String name) async {
+    _validatePortableName(name);
     final path = remoteChild(directory, name);
     try {
       final handle = await request(client.open(path,
