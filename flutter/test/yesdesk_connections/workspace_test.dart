@@ -37,7 +37,11 @@ void main() {
       rdp: RdpLauncher(),
     );
   });
-  tearDown(() => root.delete(recursive: true));
+  tearDown(() async {
+    // Wait for queued catalog writes to release their Windows file handles.
+    await repository.load();
+    await root.delete(recursive: true);
+  });
 
   Future<void> mount(WidgetTester tester,
       {String language = 'en',

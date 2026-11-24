@@ -236,6 +236,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
-    await waitFor(find.text('Windows RDP client exited with code 9.'));
+    await waitFor(find.textContaining(
+        'verify the trusted chain and the DNS name for srv.example.com'));
   });
 }
