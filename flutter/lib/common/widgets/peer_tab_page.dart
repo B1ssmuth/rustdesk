@@ -52,6 +52,10 @@ EdgeInsets? _menuPadding() {
 
 enum _WorkspaceSection { devices, ssh, rdp, catalog }
 
+enum _SidebarMode { full, compact, hidden }
+
+const _sidebarOption = 'yesdesk-sidebar-mode';
+
 class _PeerTabPageState extends State<PeerTabPage>
     with SingleTickerProviderStateMixin {
   final List<_TabEntry> entries = [
@@ -79,6 +83,7 @@ class _PeerTabPageState extends State<PeerTabPage>
     ),
   ];
   RelativeRect? mobileTabContextMenuPos;
+  _SidebarMode _sidebar = _SidebarMode.full;
   _WorkspaceSection _section = _WorkspaceSection.devices;
   final Set<_WorkspaceSection> _visited = {};
   late final _connections = DesktopConnections(
@@ -111,6 +116,12 @@ class _PeerTabPageState extends State<PeerTabPage>
   void initState() {
     super.initState();
     _loadLocalOptions();
+    if (widget.workspaceHeader != null) {
+      final savedMode = bind.getLocalFlutterOption(k: _sidebarOption);
+      _sidebar = _SidebarMode.values.firstWhere(
+          (mode) => mode.name == savedMode,
+          orElse: () => _SidebarMode.full);
+    }
   }
 
   void _loadLocalOptions() {
@@ -177,6 +188,61 @@ class _PeerTabPageState extends State<PeerTabPage>
     );
   }
 
+  void _showSidebarOptions(PeerTabModel model, SshStrings labels) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => ListenableBuilder(
+        listenable: model,
+        builder: (context, _) => StatefulBuilder(
+          builder: (context, updateDialog) => AlertDialog(
+            title: Text(labels.text('Sidebar', 'Боковая панель')),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final (mode, label) in [
+                    (_SidebarMode.full, labels.text('Full', 'Полная')),
+                    (_SidebarMode.compact, labels.text('Icons', 'Значки')),
+                    (_SidebarMode.hidden, labels.text('Hidden', 'Скрыта')),
+                  ])
+                    RadioListTile<_SidebarMode>(
+                      value: mode,
+                      groupValue: _sidebar,
+                      title: Text(label),
+                      onChanged: (value) {
+                        if (!mounted || value == null) return;
+                        setState(() => _sidebar = value);
+                        updateDialog(() {});
+                        unawaited(bind.setLocalFlutterOption(
+                            k: _sidebarOption, v: value.name));
+                      },
+                    ),
+                  const Divider(),
+                  for (final tab in model.orders)
+                    if (model.isEnabled[tab])
+                      CheckboxListTile(
+                        value: model.isVisibleEnabled[tab],
+                        title: Text(model.tabTooltip(tab)),
+                        onChanged:
+                            isOptVisiableFixed || model.multiSelectionMode
+                                ? null
+                                : (value) =>
+                                    model.setTabVisible(tab, value ?? false),
+                      ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(labels.text('Done', 'Готово'))),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildWorkspace(PeerTabModel model, Widget header) {
     final colors = YesDeskColors.of(context);
     final tabs = model.visibleEnabledOrderedIndexs;
@@ -185,216 +251,222 @@ class _PeerTabPageState extends State<PeerTabPage>
     final language = supportsSsh ? bind.mainGetLocalOption(key: 'lang') : '';
     final workspaceLanguage =
         language.isEmpty ? localeName.toString() : language;
+    final labels = SshStrings(workspaceLanguage);
     final tabFixed = isOptionFixed(kOptionPeerTabIndex);
     final devicesSelected = _section == _WorkspaceSection.devices;
     final sshSelected = _section == _WorkspaceSection.ssh;
     final rdpSelected = _section == _WorkspaceSection.rdp;
     final catalogSelected = _section == _WorkspaceSection.catalog;
     return LayoutBuilder(builder: (context, constraints) {
-      final compact = constraints.maxWidth < 690;
+      final compact =
+          _sidebar == _SidebarMode.compact || constraints.maxWidth < 690;
+      final hidden = _sidebar == _SidebarMode.hidden;
       return Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            width: compact ? 60 : 212,
-            child: Material(
-              color: colors.surface,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (supportsSsh)
-                    Padding(
-                      padding: const EdgeInsets.all(YesDeskSpace.sm),
-                      child: YesDeskNavItem(
-                        icon: Icons.folder_copy_outlined,
-                        label: SshStrings(workspaceLanguage)
-                            .text('My connections', 'Мои подключения'),
-                        selected: catalogSelected,
-                        compact: compact,
-                        onPressed: model.multiSelectionMode
-                            ? null
-                            : () => _openSection(_WorkspaceSection.catalog),
+          if (!hidden)
+            SizedBox(
+              width: compact ? 60 : 212,
+              child: Material(
+                color: colors.surface,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (supportsSsh)
+                      Padding(
+                        padding: const EdgeInsets.all(YesDeskSpace.sm),
+                        child: YesDeskNavItem(
+                          icon: Icons.folder_copy_outlined,
+                          label: SshStrings(workspaceLanguage)
+                              .text('My connections', 'Мои подключения'),
+                          selected: catalogSelected,
+                          compact: compact,
+                          onPressed: model.multiSelectionMode
+                              ? null
+                              : () => _openSection(_WorkspaceSection.catalog),
+                        ),
+                      ),
+                    Flexible(
+                      child: visibleContextMenuListener(
+                        ReorderableListView.builder(
+                          padding: const EdgeInsets.all(YesDeskSpace.sm),
+                          buildDefaultDragHandles: false,
+                          shrinkWrap: true,
+                          itemCount: tabs.length,
+                          onReorder: model.reorder,
+                          itemBuilder: (context, index) {
+                            final tab = tabs[index];
+                            return ReorderableDragStartListener(
+                              key: ValueKey(tab),
+                              index: index,
+                              child: Padding(
+                                padding: const EdgeInsets.only(
+                                    bottom: YesDeskSpace.xs),
+                                child: YesDeskNavItem(
+                                  label: model.tabTooltip(tab),
+                                  icon: model.tabIcon(tab),
+                                  compact: compact,
+                                  selected: devicesSelected &&
+                                      model.currentTab == tab,
+                                  onPressed: !devicesSelected
+                                      ? () {
+                                          _openSection(
+                                              _WorkspaceSection.devices);
+                                          if (!tabFixed &&
+                                              !model.multiSelectionMode) {
+                                            _selectTab(tab);
+                                          }
+                                        }
+                                      : tabFixed || model.multiSelectionMode
+                                          ? null
+                                          : () => _selectTab(tab),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
-                  Flexible(
-                    child: visibleContextMenuListener(
-                      ReorderableListView.builder(
-                        padding: const EdgeInsets.all(YesDeskSpace.sm),
-                        buildDefaultDragHandles: false,
-                        shrinkWrap: true,
-                        itemCount: tabs.length,
-                        onReorder: model.reorder,
-                        itemBuilder: (context, index) {
-                          final tab = tabs[index];
-                          return ReorderableDragStartListener(
-                            key: ValueKey(tab),
-                            index: index,
-                            child: Padding(
-                              padding: const EdgeInsets.only(
-                                  bottom: YesDeskSpace.xs),
-                              child: YesDeskNavItem(
-                                label: model.tabTooltip(tab),
-                                icon: model.tabIcon(tab),
-                                compact: compact,
-                                selected:
-                                    devicesSelected && model.currentTab == tab,
-                                onPressed: !devicesSelected
-                                    ? () {
-                                        _openSection(_WorkspaceSection.devices);
-                                        if (!tabFixed &&
-                                            !model.multiSelectionMode) {
-                                          _selectTab(tab);
-                                        }
-                                      }
-                                    : tabFixed || model.multiSelectionMode
-                                        ? null
-                                        : () => _selectTab(tab),
+                    if (supportsSsh && tabs.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: YesDeskSpace.sm),
+                        child: YesDeskNavItem(
+                          icon: Icons.desktop_windows_outlined,
+                          label: SshStrings(workspaceLanguage)
+                              .text('Remote Desktop', 'Удалённый рабочий стол'),
+                          selected: devicesSelected,
+                          compact: compact,
+                          onPressed: () =>
+                              _openSection(_WorkspaceSection.devices),
+                        ),
+                      ),
+                    if (supportsSsh)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: YesDeskSpace.sm),
+                        child: YesDeskNavItem(
+                          icon: Icons.terminal,
+                          label: 'SSH / SFTP',
+                          selected: sshSelected,
+                          compact: compact,
+                          onPressed: model.multiSelectionMode
+                              ? null
+                              : () => _openSection(_WorkspaceSection.ssh),
+                        ),
+                      ),
+                    if (supportsRdp)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: YesDeskSpace.sm),
+                        child: YesDeskNavItem(
+                          icon: Icons.monitor_outlined,
+                          label: 'Windows RDP',
+                          selected: rdpSelected,
+                          compact: compact,
+                          onPressed: model.multiSelectionMode
+                              ? null
+                              : () => _openSection(_WorkspaceSection.rdp),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          if (!hidden) const VerticalDivider(width: 1),
+          Expanded(
+            key: const ValueKey('workspace-content'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton(
+                    tooltip: labels.text(
+                        'Sidebar options', 'Настройки боковой панели'),
+                    onPressed: () => _showSidebarOptions(model, labels),
+                    icon: const Icon(Icons.tune_rounded, size: 18),
+                  ),
+                ),
+                Expanded(
+                  child: IndexedStack(
+                    index: _section.index,
+                    sizing: StackFit.expand,
+                    children: [
+                      ExcludeFocus(
+                        excluding: !devicesSelected,
+                        child: LayoutBuilder(builder: (context, body) {
+                          return SingleChildScrollView(
+                            primary: false,
+                            child: SizedBox(
+                              height: math.max(body.maxHeight,
+                                  MediaQuery.textScalerOf(context).scale(360)),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    YesDeskSpace.lg,
+                                    YesDeskSpace.lg,
+                                    YesDeskSpace.lg,
+                                    0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: ConstrainedBox(
+                                        constraints:
+                                            const BoxConstraints(maxWidth: 760),
+                                        child: header,
+                                      ),
+                                    ),
+                                    const SizedBox(height: YesDeskSpace.md),
+                                    if (model.multiSelectionMode)
+                                      createMultiSelectionBar(model)
+                                    else if (tabs.isNotEmpty) ...[
+                                      Text(model.tabTooltip(model.currentTab),
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium),
+                                      Wrap(
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
+                                        children:
+                                            _landscapeRightActions(context),
+                                      ),
+                                    ],
+                                    const Divider(height: 1),
+                                    _createPeersView(),
+                                  ],
+                                ),
                               ),
                             ),
                           );
-                        },
+                        }),
                       ),
-                    ),
+                      if (_visited.contains(_WorkspaceSection.ssh))
+                        ExcludeFocus(
+                          excluding: !sshSelected,
+                          child: _connections.ssh(workspaceLanguage),
+                        )
+                      else
+                        const SizedBox.shrink(),
+                      if (_visited.contains(_WorkspaceSection.rdp))
+                        ExcludeFocus(
+                          excluding: !rdpSelected,
+                          child: _connections.rdp(workspaceLanguage),
+                        )
+                      else
+                        const SizedBox.shrink(),
+                      if (_visited.contains(_WorkspaceSection.catalog))
+                        ExcludeFocus(
+                          excluding: !catalogSelected,
+                          child: _connections.catalog(workspaceLanguage,
+                              visible: catalogSelected),
+                        )
+                      else
+                        const SizedBox.shrink(),
+                    ],
                   ),
-                  if (supportsSsh && tabs.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: YesDeskSpace.sm),
-                      child: YesDeskNavItem(
-                        icon: Icons.desktop_windows_outlined,
-                        label: SshStrings(workspaceLanguage)
-                            .text('Remote Desktop', 'Удалённый рабочий стол'),
-                        selected: devicesSelected,
-                        compact: compact,
-                        onPressed: () =>
-                            _openSection(_WorkspaceSection.devices),
-                      ),
-                    ),
-                  if (supportsSsh)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: YesDeskSpace.sm),
-                      child: YesDeskNavItem(
-                        icon: Icons.terminal,
-                        label: 'SSH / SFTP',
-                        selected: sshSelected,
-                        compact: compact,
-                        onPressed: model.multiSelectionMode
-                            ? null
-                            : () => _openSection(_WorkspaceSection.ssh),
-                      ),
-                    ),
-                  if (supportsRdp)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: YesDeskSpace.sm),
-                      child: YesDeskNavItem(
-                        icon: Icons.monitor_outlined,
-                        label: 'Windows RDP',
-                        selected: rdpSelected,
-                        compact: compact,
-                        onPressed: model.multiSelectionMode
-                            ? null
-                            : () => _openSection(_WorkspaceSection.rdp),
-                      ),
-                    ),
-                  Align(
-                    alignment:
-                        compact ? Alignment.center : Alignment.centerLeft,
-                    child: PopupMenuButton<int>(
-                      tooltip: translate('Device sections'),
-                      icon: const Icon(Icons.tune_rounded, size: 18),
-                      onSelected: (tab) => model.setTabVisible(
-                          tab, !model.isVisibleEnabled[tab]),
-                      itemBuilder: (_) => [
-                        for (final tab in model.orders)
-                          if (model.isEnabled[tab])
-                            CheckedPopupMenuItem(
-                              value: tab,
-                              checked: model.isVisibleEnabled[tab],
-                              enabled: !isOptVisiableFixed &&
-                                  !model.multiSelectionMode,
-                              child: Text(model.tabTooltip(tab)),
-                            ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: IndexedStack(
-              index: _section.index,
-              sizing: StackFit.expand,
-              children: [
-                ExcludeFocus(
-                  excluding: !devicesSelected,
-                  child: LayoutBuilder(builder: (context, body) {
-                    return SingleChildScrollView(
-                      primary: false,
-                      child: SizedBox(
-                        height: math.max(body.maxHeight,
-                            MediaQuery.textScalerOf(context).scale(360)),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(YesDeskSpace.lg,
-                              YesDeskSpace.lg, YesDeskSpace.lg, 0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 760),
-                                  child: header,
-                                ),
-                              ),
-                              const SizedBox(height: YesDeskSpace.md),
-                              if (model.multiSelectionMode)
-                                createMultiSelectionBar(model)
-                              else if (tabs.isNotEmpty) ...[
-                                Text(model.tabTooltip(model.currentTab),
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium),
-                                Wrap(
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: _landscapeRightActions(context),
-                                ),
-                              ],
-                              const Divider(height: 1),
-                              _createPeersView(),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
                 ),
-                if (_visited.contains(_WorkspaceSection.ssh))
-                  ExcludeFocus(
-                    excluding: !sshSelected,
-                    child: _connections.ssh(workspaceLanguage),
-                  )
-                else
-                  const SizedBox.shrink(),
-                if (_visited.contains(_WorkspaceSection.rdp))
-                  ExcludeFocus(
-                    excluding: !rdpSelected,
-                    child: _connections.rdp(workspaceLanguage),
-                  )
-                else
-                  const SizedBox.shrink(),
-                if (_visited.contains(_WorkspaceSection.catalog))
-                  ExcludeFocus(
-                    excluding: !catalogSelected,
-                    child: _connections.catalog(workspaceLanguage,
-                        visible: catalogSelected),
-                  )
-                else
-                  const SizedBox.shrink(),
               ],
             ),
           ),

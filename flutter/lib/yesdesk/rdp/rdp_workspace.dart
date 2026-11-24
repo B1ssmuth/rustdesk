@@ -113,7 +113,7 @@ class RdpWorkspaceState extends State<RdpWorkspace> {
       final client = await _launcher.launch(profile);
       _notify(_text('Opened Windows Remote Desktop Connection.',
           'Клиент удалённых рабочих столов Windows запущен.'));
-      unawaited(_watchClient(client.exitCode));
+      unawaited(_watchClient(client.exitCode, profile.endpoint.host));
       widget.onLaunched?.call(profile.id);
     } catch (_) {
       _notify(_text('Could not start the Windows RDP client.',
@@ -123,12 +123,13 @@ class RdpWorkspaceState extends State<RdpWorkspace> {
     }
   }
 
-  Future<void> _watchClient(Future<int> exited) async {
+  Future<void> _watchClient(Future<int> exited, String host) async {
     try {
       final code = await exited;
       if (code != 0) {
-        _notify(_text('Windows RDP client exited with code $code.',
-            'Клиент RDP Windows завершился с кодом $code.'));
+        _notify(_text(
+            'Windows RDP exited with code $code. If MSTSC reports a certificate error, verify the trusted chain and the DNS name for $host.',
+            'Клиент RDP Windows завершился с кодом $code. При ошибке сертификата в MSTSC проверьте доверие к цепочке и DNS-имя для $host.'));
       }
     } catch (_) {
       _notify(_text('Could not read the RDP client exit status.',
@@ -161,6 +162,13 @@ class RdpWorkspaceState extends State<RdpWorkspace> {
             'Each connection opens in the Windows Remote Desktop client. Enter or save credentials in the Windows sign-in prompt.',
             'Каждое подключение открывается в клиенте удалённых рабочих столов Windows. Вводите и сохраняйте учётные данные в окне входа Windows.',
           ),
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: YesDeskSpace.sm),
+        Text(
+          _text(
+              'Use the DNS name listed on the server certificate. If Windows rejects the certificate, ask your administrator to verify its name, trusted chain and Server Authentication usage.',
+              'Используйте DNS-имя из сертификата сервера. Если Windows отклоняет сертификат, попросите администратора проверить имя, цепочку доверия и назначение «Проверка подлинности сервера».'),
           style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: YesDeskSpace.lg),
