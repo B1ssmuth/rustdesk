@@ -138,6 +138,66 @@ class PostgresTests(unittest.TestCase):
         response = production.post("/v1/agents/enroll",
                                    json=dict(device_id=self.device, enrollment_code=self.code))
         self.assertEqual(response.status_code, 503)
+        self.assertNotIn("/v1/lab/devices/{device_id}/grants",
+                         production.get("/openapi.json").json()["paths"])
+
+    def test_lab_grants_are_bound_single_use_expiring_and_revocable(self):
+        enrollment = self.client.post("/v1/agents/enroll", json={
+            "device_id": self.device, "enrollment_code": self.code,
+        })
+        agent = {"Authorization": "Bearer " + enrollment.json()["agent_token"]}
+        hardware = dict(os="Windows", model="Lab", cpu="x64", ram_bytes=1024, disks=[])
+        self.assertEqual(self.client.post("/v1/agents/heartbeat", headers=agent, json=hardware).status_code, 200)
+        issue = f"/v1/lab/devices/{self.device}/grants"
+        context = dict(protocol="lab-v1", binding="ab" * 32)
+        self.assertEqual(self.client.post(issue, headers=self.headers(), json=context).status_code, 403)
+        with psycopg.connect(database_url()) as db:
+            db.execute("INSERT INTO device_grants VALUES (%s,%s,true,true)", (ADMIN, self.device))
+        self.assertEqual(self.client.post(issue, headers=self.headers("staff"), json=context).status_code, 403)
+        self.assertEqual(self.client.post(issue, headers=self.headers(),
+                                          json={**context, "protocol": "legacy"}).status_code, 422)
+        self.assertEqual(self.client.post(f"/v1/devices/{self.device}/connection?mode=unattended",
+                                          headers=self.headers()).status_code, 403)
+
+        def mint():
+            response = self.client.post(issue, headers=self.headers(), json=context)
+            self.assertEqual(response.status_code, 201, response.text)
+            grant = response.json()
+            self.assertEqual(grant["capability"], "view")
+            return grant
+
+        def redeem(grant, headers=agent, **overrides):
+            return self.client.post(f"/v1/lab/agents/grants/{grant['id']}/redeem", headers=headers,
+                                    json={**context, "token": grant["token"],
+                                          "local_consent": True, **overrides})
+
+        grant = mint()
+        self.assertEqual(redeem(grant, local_consent=False).status_code, 403)
+        self.assertEqual(redeem(grant, binding="cd" * 32).status_code, 403)
+        other = str(uuid4())
+        with psycopg.connect(database_url()) as db, patch.dict(os.environ, {"YESDESK_ENV": "test"}):
+            code = issue_test_code(db, dict(id=other, computer_sid="S-1-5-21-12-13-14-202",
+                                            dns_name="other.example.test", hostname="OTHER",
+                                            yesdesk_id="12345679"))
+        response = self.client.post("/v1/agents/enroll", json={"device_id": other, "enrollment_code": code})
+        self.assertEqual(redeem(grant, {"Authorization": "Bearer " + response.json()["agent_token"]}).status_code, 403)
+        self.assertEqual(redeem(grant).json(),
+                         {"validated": True, "capability": "view", "session_started": False})
+        self.assertEqual(redeem(grant).status_code, 403)
+        expired = mint()
+        with psycopg.connect(database_url()) as db:
+            db.execute("UPDATE corporate_grants SET expires_at=now()-interval '1 second' WHERE id=%s",
+                       (expired["id"],))
+        self.assertEqual(redeem(expired).status_code, 403)
+        revoked = mint()
+        self.assertEqual(self.client.delete(f"/v1/lab/grants/{revoked['id']}",
+                                            headers=self.headers()).status_code, 200)
+        self.assertEqual(redeem(revoked).status_code, 403)
+        demoted = mint()
+        self.snapshot["employees"][0]["group_dns"] = [GROUPS["user"]]
+        with psycopg.connect(database_url()) as db:
+            apply_directory(db, self.snapshot)
+        self.assertEqual(redeem(demoted).status_code, 403)
 
 
 if __name__ == "__main__":

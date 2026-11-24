@@ -3,7 +3,7 @@ import hashlib
 import os
 import secrets
 from typing import Annotated, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,7 +13,7 @@ import jwt
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool
 
 from settings import database_url, https_url
 
@@ -92,6 +92,23 @@ class Workplaces(BaseModel):
 
 class AgentCredential(BaseModel):
     agent_token: str
+
+
+class LabConnection(Payload):
+    protocol: Literal["lab-v1"]
+    binding: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class LabRedemption(LabConnection):
+    token: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    local_consent: StrictBool
+
+
+class LabGrant(BaseModel):
+    id: UUID
+    token: str
+    expires_at: AwareDatetime
+    capability: Literal["view"]
 
 
 def digest(secret):
@@ -197,7 +214,7 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
     @app.get("/health/ready")
     def ready(db: Db):
         if not db.execute(
-            "SELECT 1 FROM schema_migrations WHERE name = '002_directory_snapshot.sql'"
+            "SELECT 1 FROM schema_migrations WHERE name = '003_corporate_grants.sql'"
         ).fetchone():
             raise HTTPException(503, "Database migration required")
         return {"status": "ok"}
@@ -333,13 +350,87 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
             "AND d.agent_hash IS NOT NULL AND d.last_heartbeat > now() - interval '2 minutes'",
             (user["sid"], device_id),
         ).fetchone()
-        allowed = grant is not None and grant[f"allow_{mode}"]
+        allowed = mode == "consent" and grant is not None and grant["allow_consent"]
         audit(db, user["sid"], f"connection_{mode}", device_id,
               "endpoint_integration_required" if allowed else "denied")
         db.commit()
         if not allowed:
             raise HTTPException(403, "Device connection denied")
         raise HTTPException(501, "Endpoint enforcement is not configured")
+
+    # Lab requests exercise server-side redemption without creating a RustDesk session.
+    if test_agents:
+        @app.post("/v1/lab/devices/{device_id}/grants", response_model=LabGrant, status_code=201)
+        def issue_lab_grant(device_id: UUID, payload: LabConnection, db: Db,
+                            user: Annotated[dict, Depends(employee)]):
+            grant_id = uuid4()
+            token = secrets.token_urlsafe(32)
+            row = db.execute(
+                """INSERT INTO corporate_grants
+                    (id,employee_sid,device_id,agent_hash,token_hash,binding,capability,expires_at)
+                SELECT %(id)s,e.sid,d.id,d.agent_hash,%(token)s,%(binding)s,'view',
+                    LEAST(now() + interval '30 seconds', to_timestamp(%(expires)s))
+                FROM devices d JOIN device_grants g ON g.device_id=d.id
+                JOIN employees e ON e.sid=g.employee_sid
+                JOIN employee_groups eg ON eg.employee_sid=e.sid
+                WHERE e.sid=%(sid)s AND e.enabled AND eg.group_dn=%(admin)s AND g.allow_consent
+                    AND d.id=%(device)s AND d.enabled AND d.agent_hash IS NOT NULL
+                    AND d.last_heartbeat > now() - interval '2 minutes'
+                    AND to_timestamp(%(expires)s) > now()
+                    AND EXISTS (SELECT 1 FROM directory_snapshot
+                        WHERE imported_at > now() - make_interval(secs => %(fresh)s))
+                RETURNING id, expires_at, capability""",
+                dict(id=grant_id, sid=user["sid"], device=device_id, admin=groups["admin"],
+                     token=digest(token), binding=payload.binding, expires=user["expires_at"],
+                     fresh=directory_max_age),
+            ).fetchone()
+            audit(db, user["sid"], "lab_grant_issue", device_id, "issued" if row else "denied")
+            if not row:
+                db.commit()
+                raise HTTPException(403, "Device connection denied")
+            return {**row, "token": token}
+
+        @app.post("/v1/lab/agents/grants/{grant_id}/redeem")
+        def redeem_lab_grant(grant_id: UUID, payload: LabRedemption, db: Db,
+                             device: Annotated[UUID, Depends(agent)]):
+            if not payload.local_consent:
+                audit(db, device, "lab_grant_redeem", grant_id, "consent_missing")
+                db.commit()
+                raise HTTPException(403, "Local consent required")
+            row = db.execute(
+                """UPDATE corporate_grants c SET consumed_at=clock_timestamp()
+                FROM devices d, device_grants g, employees e, employee_groups eg
+                WHERE c.id=%(id)s AND c.device_id=%(device)s AND d.id=c.device_id
+                    AND c.agent_hash=d.agent_hash AND c.employee_sid=e.sid AND e.enabled
+                    AND d.last_heartbeat > now() - interval '2 minutes'
+                    AND g.device_id=d.id AND g.employee_sid=e.sid AND g.allow_consent
+                    AND eg.employee_sid=e.sid AND eg.group_dn=%(admin)s
+                    AND c.token_hash=%(token)s AND c.binding=%(binding)s
+                    AND c.expires_at > clock_timestamp() AND c.revoked_at IS NULL
+                    AND c.consumed_at IS NULL AND EXISTS (SELECT 1 FROM directory_snapshot
+                        WHERE imported_at > now() - make_interval(secs => %(fresh)s))
+                RETURNING c.capability""",
+                dict(id=grant_id, device=device, admin=groups["admin"],
+                     token=digest(payload.token), binding=payload.binding, fresh=directory_max_age),
+            ).fetchone()
+            audit(db, device, "lab_grant_redeem", grant_id, "consumed" if row else "denied")
+            if not row:
+                db.commit()
+                raise HTTPException(403, "Grant rejected")
+            return {"validated": True, "capability": row["capability"], "session_started": False}
+
+        @app.delete("/v1/lab/grants/{grant_id}")
+        def revoke_lab_grant(grant_id: UUID, db: Db, user: Annotated[dict, Depends(employee)]):
+            row = db.execute(
+                "UPDATE corporate_grants SET revoked_at=clock_timestamp() "
+                "WHERE id=%s AND employee_sid=%s AND revoked_at IS NULL RETURNING id",
+                (grant_id, user["sid"]),
+            ).fetchone()
+            audit(db, user["sid"], "lab_grant_revoke", grant_id, "revoked" if row else "denied")
+            if not row:
+                db.commit()
+                raise HTTPException(404, "Grant unavailable")
+            return {"revoked": True}
 
     return app
 
