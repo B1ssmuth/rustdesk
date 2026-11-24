@@ -290,7 +290,7 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi,
     v.add(TTextMenu(
         child: Text(translate('Switch Sides')),
         onPressed: () =>
-            showConfirmSwitchSidesDialog(sessionId, id, ffi.dialogManager)));
+            showSwitchSidesUnavailable(ffi.dialogManager)));
   }
   // refresh
   if (pi.version.isNotEmpty) {

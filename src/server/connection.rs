@@ -73,7 +73,6 @@ lazy_static::lazy_static! {
     static ref ALIVE_CONNS: Arc::<Mutex<Vec<i32>>> = Default::default();
     pub static ref AUTHED_CONNS: Arc::<Mutex<Vec<AuthedConn>>> = Default::default();
     pub static ref CONTROL_PERMISSIONS_ARRAY: Arc::<Mutex<Vec<(i32, ControlPermissions)>>> = Default::default();
-    static ref SWITCH_SIDES_UUID: Arc::<Mutex<HashMap<String, (Instant, uuid::Uuid)>>> = Default::default();
     static ref WAKELOCK_SENDER: Arc::<Mutex<std::sync::mpsc::Sender<(usize, usize)>>> = Arc::new(Mutex::new(start_wakelock_thread()));
     static ref WAKELOCK_KEEP_AWAKE_OPTION: Arc::<Mutex<Option<bool>>> = Default::default();
 }
@@ -275,7 +274,6 @@ pub struct Connection {
     file_transferred: bool,
     #[cfg(windows)]
     portable: PortableState,
-    from_switch: bool,
     voice_call_request_timestamp: Option<NonZeroI64>,
     voice_calling: bool,
     options_in_login: Option<OptionMessage>,
@@ -458,7 +456,6 @@ impl Connection {
             file_transferred: false,
             #[cfg(windows)]
             portable: Default::default(),
-            from_switch: false,
             audio_sender: None,
             voice_call_request_timestamp: None,
             voice_calling: false,
@@ -1414,7 +1411,7 @@ impl Connection {
         if self.authorized {
             return true;
         }
-        if self.require_2fa.is_some() && !self.is_recent_session(true) && !self.from_switch {
+        if self.require_2fa.is_some() && !self.is_recent_session(true) {
             self.require_2fa.as_ref().map(|totp| {
                 let bot = crate::auth_2fa::TelegramBot::get();
                 let bot = match bot {
@@ -1648,7 +1645,18 @@ impl Connection {
             log::info!("peer info supported_encoding: {:?}", supported_encoding);
             pi.encoding = Some(supported_encoding).into();
 
-            pi.displays = camera::Cameras::all_info().unwrap_or(Vec::new());
+            pi.displays = match camera::Cameras::all_info() {
+                Ok(displays) if !displays.is_empty() => displays,
+                Ok(_) => {
+                    self.send_login_error("yesdesk_camera_not_found").await;
+                    return false;
+                }
+                Err(err) => {
+                    log::warn!("Could not initialize camera devices: {}", err);
+                    self.send_login_error("yesdesk_camera_unavailable").await;
+                    return false;
+                }
+            };
             pi.current_display = camera::PRIMARY_CAMERA_IDX as _;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
@@ -1900,7 +1908,7 @@ impl Connection {
             restart: self.restart,
             recording: self.recording,
             block_input: self.block_input,
-            from_switch: self.from_switch,
+            from_switch: false,
         });
     }
 
@@ -2218,6 +2226,17 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
+        match legacy_switch_message(&msg) {
+            Some(LegacySwitch::Request) => {
+                log::info!("Rejected legacy switch-sides request");
+                return true;
+            }
+            Some(LegacySwitch::ReverseLogin) => {
+                self.send_login_error("yesdesk_switch_sides_unavailable").await;
+                return false;
+            }
+            None => {}
+        }
         if let Some(message::Union::Misc(misc)) = &msg.union {
             // Move the CloseReason forward, as this message needs to be received when unauthorized, especially for kcp.
             if let Some(misc::Union::CloseReason(s)) = &misc.union {
@@ -2479,33 +2498,6 @@ impl Connection {
                         .unwrap()
                         .user_network_delay(self.inner.id(), new_delay);
                     self.network_delay = new_delay;
-                }
-            }
-        } else if let Some(message::Union::SwitchSidesResponse(_s)) = msg.union {
-            #[cfg(feature = "flutter")]
-            if let Some(lr) = _s.lr.clone().take() {
-                self.handle_login_request_without_validation(&lr).await;
-                SWITCH_SIDES_UUID
-                    .lock()
-                    .unwrap()
-                    .retain(|_, v| v.0.elapsed() < Duration::from_secs(10));
-                let uuid_old = SWITCH_SIDES_UUID.lock().unwrap().remove(&lr.my_id);
-                if let Ok(uuid) = uuid::Uuid::from_slice(_s.uuid.to_vec().as_ref()) {
-                    if let Some((_instant, uuid_old)) = uuid_old {
-                        if uuid == uuid_old {
-                            self.from_switch = true;
-                            if !self.send_logon_response_and_keep_alive().await {
-                                return false;
-                            }
-                            self.try_start_cm(
-                                lr.my_id.clone(),
-                                lr.my_name.clone(),
-                                self.authorized,
-                            );
-                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                            self.try_start_cm_ipc();
-                        }
-                    }
                 }
             }
         } else if self.authorized {
@@ -3195,20 +3187,6 @@ impl Connection {
                             self.audio_sender
                                 .as_ref()
                                 .map(|a| allow_err!(a.send(MediaData::AudioFormat(format))));
-                        }
-                    }
-                    #[cfg(feature = "flutter")]
-                    Some(misc::Union::SwitchSidesRequest(s)) => {
-                        if let Ok(uuid) = uuid::Uuid::from_slice(&s.uuid.to_vec()[..]) {
-                            crate::run_me(vec![
-                                "--connect",
-                                &self.lr.my_id,
-                                "--switch_uuid",
-                                uuid.to_string().as_ref(),
-                            ])
-                            .ok();
-                            self.on_close("switch sides", false).await;
-                            return false;
                         }
                     }
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -4823,11 +4801,45 @@ impl Connection {
     }
 }
 
-pub fn insert_switch_sides_uuid(id: String, uuid: uuid::Uuid) {
-    SWITCH_SIDES_UUID
-        .lock()
-        .unwrap()
-        .insert(id, (tokio::time::Instant::now(), uuid));
+
+#[derive(Debug, PartialEq, Eq)]
+enum LegacySwitch {
+    Request,
+    ReverseLogin,
+}
+
+fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
+    match msg.union.as_ref() {
+        Some(message::Union::SwitchSidesResponse(_)) => Some(LegacySwitch::ReverseLogin),
+        Some(message::Union::Misc(misc)) if misc.has_switch_sides_request() => {
+            Some(LegacySwitch::Request)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod switch_sides_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_wire_messages_cannot_use_the_ordinary_login_or_control_path() {
+        let mut request = Misc::new();
+        request.set_switch_sides_request(SwitchSidesRequest::default());
+        let mut message = Message::new();
+        message.set_misc(request);
+        let decoded = Message::parse_from_bytes(&message.write_to_bytes().unwrap()).unwrap();
+        assert_eq!(legacy_switch_message(&decoded), Some(LegacySwitch::Request));
+
+        message.set_switch_sides_response(SwitchSidesResponse::default());
+        let decoded = Message::parse_from_bytes(&message.write_to_bytes().unwrap()).unwrap();
+        assert_eq!(legacy_switch_message(&decoded), Some(LegacySwitch::ReverseLogin));
+
+        message.set_login_request(LoginRequest::default());
+        assert_eq!(legacy_switch_message(&message), None);
+        message.set_key_event(KeyEvent::default());
+        assert_eq!(legacy_switch_message(&message), None);
+    }
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

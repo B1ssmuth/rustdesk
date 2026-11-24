@@ -38,7 +38,6 @@ use std::{
     },
     time::SystemTime,
 };
-use uuid::Uuid;
 
 use crate::client::io_loop::Remote;
 use crate::client::{
@@ -1462,42 +1461,14 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::ElevateWithLogon(username, password));
     }
 
-    #[cfg(any(target_os = "ios"))]
-    pub fn switch_sides(&self) {}
-
-    #[cfg(not(any(target_os = "ios")))]
-    #[tokio::main(flavor = "current_thread")]
-    pub async fn switch_sides(&self) {
-        match crate::ipc::connect(1000, "").await {
-            Ok(mut conn) => {
-                if conn
-                    .send(&crate::ipc::Data::SwitchSidesRequest(self.get_id()))
-                    .await
-                    .is_ok()
-                {
-                    if let Ok(Some(data)) = conn.next_timeout(1000).await {
-                        match data {
-                            crate::ipc::Data::SwitchSidesRequest(str_uuid) => {
-                                if let Ok(uuid) = Uuid::from_str(&str_uuid) {
-                                    let mut misc = Misc::new();
-                                    misc.set_switch_sides_request(SwitchSidesRequest {
-                                        uuid: Bytes::from(uuid.as_bytes().to_vec()),
-                                        ..Default::default()
-                                    });
-                                    let mut msg_out = Message::new();
-                                    msg_out.set_misc(misc);
-                                    self.send(Data::Message(msg_out));
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                log::info!("server not started (will try to start): {}", err);
-            }
-        }
+    pub fn switch_sides(&self) {
+        self.ui_handler.msgbox(
+            "custom-nocancel",
+            "Switch Sides",
+            "yesdesk_switch_sides_unavailable",
+            "",
+            false,
+        );
     }
 
     fn set_custom_resolution(&self, display: &SwitchDisplay) {

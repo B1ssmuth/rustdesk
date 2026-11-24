@@ -770,15 +770,7 @@ async fn handle(data: Data, stream: &mut Connection) {
         Data::TestRendezvousServer => {
             crate::test_rendezvous_server();
         }
-        Data::SwitchSidesRequest(id) => {
-            let uuid = uuid::Uuid::new_v4();
-            crate::server::insert_switch_sides_uuid(id, uuid.clone());
-            allow_err!(
-                stream
-                    .send(&Data::SwitchSidesRequest(uuid.to_string()))
-                    .await
-            );
-        }
+        Data::SwitchSidesRequest(_) => {}
         #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Data::Plugin(plugin) => crate::plugin::ipc::handle_plugin(plugin, stream).await,

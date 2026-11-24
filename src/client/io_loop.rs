@@ -457,7 +457,10 @@ impl<T: InvokeUiSession> Remote<T> {
             // It's better to distinguish the server side and client side.
             // But it' not necessary for now, because it's not a common case.
             // And it is immediately known when the input device is changed.
-            crate::audio_service::set_voice_call_input_device(get_default_sound_input(), false);
+            let device = get_default_sound_input();
+            #[cfg(windows)]
+            device.as_ref()?;
+            crate::audio_service::set_voice_call_input_device(device, false);
             // Create a channel to receive error or closed message
             let (tx, rx) = std::sync::mpsc::channel();
             let (tx_audio_data, mut rx_audio_data) =
@@ -1988,8 +1991,16 @@ impl<T: InvokeUiSession> Remote<T> {
                         } else {
                             if response.accepted {
                                 // The peer accepted the voice call.
-                                self.handler.on_voice_call_started();
+                                if self.stop_voice_call_sender.is_some() {
+                                    return true;
+                                }
                                 self.stop_voice_call_sender = self.start_voice_call();
+                                if self.stop_voice_call_sender.is_some() {
+                                    self.handler.on_voice_call_started();
+                                } else {
+                                    self.handler.on_voice_call_closed("yesdesk_microphone_unavailable");
+                                    allow_err!(peer.send(&new_voice_call_request(false)).await);
+                                }
                             } else {
                                 // The peer refused the voice call.
                                 self.handler.on_voice_call_closed("");

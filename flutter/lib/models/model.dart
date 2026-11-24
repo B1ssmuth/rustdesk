@@ -430,9 +430,8 @@ class FfiModel with ChangeNotifier {
       } else if (name == 'cancel_msgbox') {
         cancelMsgBox(evt, sessionId);
       } else if (name == 'switch_back') {
-        final peer_id = evt['peer_id'].toString();
-        await bind.sessionSwitchSides(sessionId: sessionId);
-        closeConnection(id: peer_id);
+        final manager = parent.target?.dialogManager;
+        if (manager != null) showSwitchSidesUnavailable(manager);
       } else if (name == 'portable_service_running') {
         _handlePortableServiceRunning(peerId, evt);
       } else if (name == 'on_url_scheme_received') {

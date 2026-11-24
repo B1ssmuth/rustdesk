@@ -16,11 +16,18 @@ use super::*;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use hbb_common::anyhow::anyhow;
 use magnum_opus::{Application::*, Channels::*, Encoder};
-use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::sync::atomic::AtomicBool;
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 pub const NAME: &'static str = "audio";
 pub const AUDIO_DATA_SIZE_U8: usize = 960 * 4; // 10ms in 48000 stereo
+#[cfg(any(target_os = "linux", target_os = "android"))]
 static RESTARTING: AtomicBool = AtomicBool::new(false);
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+static INPUT_GENERATION: AtomicUsize = AtomicUsize::new(0);
 
 lazy_static::lazy_static! {
     static ref VOICE_CALL_INPUT_DEVICE: Arc::<Mutex::<Option<String>>> = Default::default();
@@ -47,14 +54,12 @@ pub fn get_voice_call_input_device() -> Option<String> {
 
 #[inline]
 pub fn set_voice_call_input_device(device: Option<String>, set_if_present: bool) {
-    if !set_if_present && VOICE_CALL_INPUT_DEVICE.lock().unwrap().is_some() {
+    let mut current = VOICE_CALL_INPUT_DEVICE.lock().unwrap();
+    if (!set_if_present && current.is_some()) || *current == device {
         return;
     }
-
-    if *VOICE_CALL_INPUT_DEVICE.lock().unwrap() == device {
-        return;
-    }
-    *VOICE_CALL_INPUT_DEVICE.lock().unwrap() = device;
+    *current = device;
+    drop(current);
     restart();
 }
 
@@ -69,10 +74,11 @@ fn get_audio_input() -> String {
 
 pub fn restart() {
     log::info!("restart the audio service, freezing now...");
-    if RESTARTING.load(Ordering::SeqCst) {
-        return;
-    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     RESTARTING.store(true, Ordering::SeqCst);
+    // The incoming server and outgoing voice service must both observe this change.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    INPUT_GENERATION.fetch_add(1, Ordering::SeqCst);
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -186,6 +192,7 @@ mod cpal_impl {
     #[derive(Default)]
     pub struct State {
         stream: Option<(Box<dyn StreamTrait>, Arc<Message>)>,
+        input_generation: usize,
     }
 
     impl super::service::Reset for State {
@@ -206,7 +213,6 @@ mod cpal_impl {
         if let Some((_, format)) = &state.stream {
             sp.send_shared(format.clone());
         }
-        RESTARTING.store(false, Ordering::SeqCst);
         Ok(())
     }
 
@@ -227,11 +233,14 @@ mod cpal_impl {
     }
 
     pub fn run(sp: EmptyExtraFieldService, state: &mut State) -> ResultType<()> {
-        if !RESTARTING.load(Ordering::SeqCst) {
-            run_serv_snapshot(sp, state)
+        let generation = INPUT_GENERATION.load(Ordering::SeqCst);
+        if state.input_generation == generation || state.stream.is_none() {
+            run_serv_snapshot(sp, state)?;
         } else {
-            run_restart(sp, state)
+            run_restart(sp, state)?;
         }
+        state.input_generation = generation;
+        Ok(())
     }
 
     fn send(
