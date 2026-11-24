@@ -947,6 +947,12 @@ message TerminalResponse {
   }
 }
 
+// Reserved for an independently negotiated corporate protocol. This message
+// does not carry a grant and must never enter the ordinary login path.
+message CorporateAccessRequest {
+  uint32 protocol_version = 1;
+}
+
 message Message {
   oneof union {
     SignedId signed_id = 3;
@@ -979,5 +985,6 @@ message Message {
     ScreenshotResponse screenshot_response= 30;
     TerminalAction terminal_action = 31;
     TerminalResponse terminal_response = 32;
+    CorporateAccessRequest corporate_access_request = 33;
   }
 }

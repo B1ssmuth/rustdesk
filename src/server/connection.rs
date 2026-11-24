@@ -2226,6 +2226,10 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
+        if is_corporate_access_request(&msg) {
+            self.send_login_error("yesdesk_corporate_access_unavailable").await;
+            return false;
+        }
         match legacy_switch_message(&msg) {
             Some(LegacySwitch::Request) => {
                 log::info!("Rejected legacy switch-sides request");
@@ -4808,6 +4812,10 @@ enum LegacySwitch {
     ReverseLogin,
 }
 
+fn is_corporate_access_request(msg: &Message) -> bool {
+    matches!(&msg.union, Some(message::Union::CorporateAccessRequest(_)))
+}
+
 fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
     match msg.union.as_ref() {
         Some(message::Union::SwitchSidesResponse(_)) => Some(LegacySwitch::ReverseLogin),
@@ -4821,6 +4829,16 @@ fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
 #[cfg(test)]
 mod switch_sides_tests {
     use super::*;
+
+    #[test]
+    fn corporate_message_is_distinct_from_ordinary_password_login() {
+        let mut message = Message::new();
+        message.set_corporate_access_request(CorporateAccessRequest::default());
+        let decoded = Message::parse_from_bytes(&message.write_to_bytes().unwrap()).unwrap();
+        assert!(is_corporate_access_request(&decoded));
+        message.set_login_request(LoginRequest::default());
+        assert!(!is_corporate_access_request(&message));
+    }
 
     #[test]
     fn legacy_wire_messages_cannot_use_the_ordinary_login_or_control_path() {

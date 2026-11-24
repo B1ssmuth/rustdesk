@@ -100,6 +100,7 @@ class _DirectoryState extends State<_Directory> {
   bool _devices = false;
   Map<String, dynamic>? _employee;
   String? _notice;
+  bool _requestPending = false;
 
   String t(String en, String ru) => widget.ru ? ru : en;
 
@@ -126,31 +127,49 @@ class _DirectoryState extends State<_Directory> {
       });
 
   Future<void> _connect(String id) async {
+    if (_requestPending) return;
+    setState(() {
+      _requestPending = true;
+      _notice = null;
+    });
     try {
       await corporateSession.api('/v1/devices/$id/connection', post: true);
+      if (mounted) {
+        setState(
+            () => _notice = t('No session was started.', 'Сеанс не запущен.'));
+      }
     } on CorporateApiError catch (error) {
       if (!mounted) return;
-      setState(() => _notice = error.statusCode == 501
-          ? t('Endpoint authorization is pending.',
-              'Авторизация на компьютере ещё не настроена.')
-          : t('Connection denied or device unavailable.',
-              'Доступ запрещён или компьютер недоступен.'));
+      setState(() => _notice = switch (error.statusCode) {
+            501 => t('The endpoint cannot verify corporate access yet.',
+                'Компьютер пока не может проверить корпоративный доступ.'),
+            401 => t('Sign in again to continue.', 'Войдите снова.'),
+            403 => t('Access denied or device unavailable.',
+                'Доступ запрещён или компьютер недоступен.'),
+            _ => t('Management API unavailable.', 'Management API недоступен.'),
+          });
     } catch (_) {
       if (mounted) {
         setState(() => _notice =
             t('Management API unavailable.', 'Management API недоступен.'));
       }
+    } finally {
+      if (mounted) setState(() => _requestPending = false);
     }
   }
 
   ListTile _device(Map<String, dynamic> row, {required bool latest}) {
     final heartbeat = DateTime.tryParse('${row['last_heartbeat']}')?.toLocal();
-    final online = heartbeat != null &&
-        DateTime.now().difference(heartbeat) < const Duration(minutes: 2);
+    final age = heartbeat == null ? null : DateTime.now().difference(heartbeat);
+    final fresh =
+        age != null && !age.isNegative && age < const Duration(minutes: 2);
     final hardware = row['metadata'] as Map<String, dynamic>? ?? {};
     final detail = [
       '${row['dns_name']} · ID ${row['yesdesk_id']}',
-      online ? t('Available', 'Доступен') : t('Data stale', 'Данные устарели'),
+      t('Registered device', 'Зарегистрированное устройство'),
+      fresh
+          ? t('Recent agent heartbeat', 'Свежая связь с агентом')
+          : t('Agent status unconfirmed', 'Состояние агента не подтверждено'),
       if (heartbeat != null) '${t('Heartbeat', 'Последняя связь')} $heartbeat',
       if (row['is_primary'] == true)
         t('Primary workplace', 'Основное рабочее место'),
@@ -175,9 +194,10 @@ class _DirectoryState extends State<_Directory> {
     return ListTile(
       title: Text('${row['hostname']}'),
       subtitle: Text(detail.join('\n')),
-      trailing: row['can_request_consent'] == true && online
+      trailing: row['can_request_consent'] == true && fresh
           ? TextButton(
-              onPressed: () => _connect(row['id'] as String),
+              onPressed:
+                  _requestPending ? null : () => _connect(row['id'] as String),
               child: Text(t('Request connection', 'Запросить подключение')),
             )
           : null,

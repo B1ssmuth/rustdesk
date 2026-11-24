@@ -171,6 +171,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("yesdesk_microphone_unavailable", "No microphone is available for the call. Check the Windows input device and desktop-app microphone access."),
         ("yesdesk_switch_sides_unavailable", "Switch Sides is unavailable because this protocol cannot guarantee view-only access or request permission to control the shared computer."),
         ("Switch Sides", "Switch sides"),
+        ("yesdesk_corporate_access_unavailable", "Corporate access is unavailable on this endpoint."),
         ("Default View Style", "Default view style"),
         ("Default Scroll Style", "Default scroll style"),
         ("Default Image Quality", "Default image quality"),
