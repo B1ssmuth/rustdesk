@@ -39,6 +39,8 @@ function Invoke-WindowsFlutterPubGet($Layout, [string] $Source) {
             }
         }
         Write-Host 'Linked resolved Flutter plugins with local NTFS junctions.'
+        # The failed command stopped before writing the native plugin registrant.
+        Invoke-BuildCommand $Layout.FlutterExe @('pub', 'get', '--enforce-lockfile')
     } finally {
         Pop-Location
     }

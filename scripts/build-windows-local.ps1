@@ -93,6 +93,9 @@ with tarfile.open(archive) as snapshot:
         if (!(Test-Path -LiteralPath (Join-Path $source 'flutter\.dart_tool\package_config.json') -PathType Leaf)) {
             throw 'The resumed run is missing the resolved Flutter package configuration.'
         }
+        if (!(Test-Path -LiteralPath (Join-Path $source 'flutter\windows\flutter\generated_plugins.cmake') -PathType Leaf)) {
+            Invoke-WindowsFlutterPubGet $layout $source
+        }
     } else {
         Invoke-WindowsFlutterPubGet $layout $source
         if ($BridgeMode -eq 'Native') {
