@@ -612,14 +612,6 @@ class _SftpExplorerState extends State<SftpExplorer> {
                     label: l.text('Refresh (F5)', 'Обновить (F5)'),
                     icon: Icons.refresh,
                     onPressed: _busy ? null : () => _navigate(_loadedPath)),
-                YesDeskIconButton(
-                    label: l.text('New directory', 'Новый каталог'),
-                    icon: Icons.create_new_folder_outlined,
-                    onPressed: _busy ? null : _mkdir),
-                YesDeskIconButton(
-                    label: l.text('New file', 'Новый файл'),
-                    icon: Icons.note_add_outlined,
-                    onPressed: _busy ? null : _createFile),
               ]),
               Row(children: [
                 Expanded(
@@ -652,6 +644,14 @@ class _SftpExplorerState extends State<SftpExplorer> {
                     onPressed: () => setState(() => _ascending = !_ascending)),
               ]),
               Wrap(children: [
+                YesDeskIconButton(
+                    label: l.text('New directory', 'Новый каталог'),
+                    icon: Icons.create_new_folder_outlined,
+                    onPressed: _busy ? null : _mkdir),
+                YesDeskIconButton(
+                    label: l.text('New file', 'Новый файл'),
+                    icon: Icons.note_add_outlined,
+                    onPressed: _busy ? null : _createFile),
                 YesDeskIconButton(
                     label: l.text('Upload files', 'Загрузить файлы'),
                     icon: Icons.upload,

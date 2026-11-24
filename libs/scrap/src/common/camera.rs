@@ -1,7 +1,6 @@
-use std::{
-    io,
-    sync::{Arc, Mutex},
-};
+use std::io;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use std::sync::Mutex;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use nokhwa::{
@@ -22,8 +21,9 @@ use crate::{Frame, TraitCapturer};
 use crate::{PixelBuffer, Pixfmt};
 
 pub const PRIMARY_CAMERA_IDX: usize = 0;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 lazy_static::lazy_static! {
-    static ref SYNC_CAMERA_DISPLAYS: Arc<Mutex<Vec<DisplayInfo>>> = Arc::new(Mutex::new(Vec::new()));
+    static ref SYNC_CAMERAS: Mutex<Vec<(CameraIndex, DisplayInfo)>> = Mutex::new(Vec::new());
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -41,7 +41,7 @@ impl Cameras {
     pub fn all_info() -> ResultType<Vec<DisplayInfo>> {
         match query(ApiBackend::Auto) {
             Ok(cameras) => {
-                let mut camera_displays = SYNC_CAMERA_DISPLAYS.lock().unwrap();
+                let mut camera_displays = SYNC_CAMERAS.lock().unwrap();
                 camera_displays.clear();
                 // FIXME: nokhwa returns duplicate info for one physical camera on linux for now.
                 // issue: https://github.com/l1npengtul/nokhwa/issues/171
@@ -65,7 +65,7 @@ impl Cameras {
                         let camera = Self::create_camera(&camera_index)?;
                         let resolution = camera.resolution();
                         let (width, height) = (resolution.width() as i32, resolution.height() as i32);
-                        camera_displays.push(DisplayInfo {
+                        camera_displays.push((camera_index, DisplayInfo {
                             x: 0,
                             y: 0,
                             name: info.human_name().clone(),
@@ -80,14 +80,21 @@ impl Cameras {
                                 ..Default::default()
                             }).into(),
                             ..Default::default()
-                        });
+                        }));
                     } else {
                         let mut x = 0;
+                        let mut first_error = None;
                         for info in &cameras {
-                            let camera = Self::create_camera(info.index())?;
+                            let camera = match Self::create_camera(info.index()) {
+                                Ok(camera) => camera,
+                                Err(error) => {
+                                    first_error.get_or_insert(error);
+                                    continue;
+                                }
+                            };
                             let resolution = camera.resolution();
                             let (width, height) = (resolution.width() as i32, resolution.height() as i32);
-                            camera_displays.push(DisplayInfo {
+                            camera_displays.push((info.index().clone(), DisplayInfo {
                                 x,
                                 y: 0,
                                 name: info.human_name().clone(),
@@ -102,12 +109,20 @@ impl Cameras {
                                     ..Default::default()
                                 }).into(),
                                 ..Default::default()
-                            });
+                            }));
                             x += width;
+                        }
+                        if camera_displays.is_empty() {
+                            if let Some(error) = first_error {
+                                return Err(error);
+                            }
                         }
                     }
                 }
-                Ok(camera_displays.clone())
+                Ok(camera_displays
+                    .iter()
+                    .map(|(_, display)| display.clone())
+                    .collect())
             }
             Err(e) => {
                 bail!("Query cameras error: {}", e)
@@ -139,7 +154,7 @@ impl Cameras {
     }
 
     pub fn get_camera_resolution(index: usize) -> ResultType<Resolution> {
-        let index = CameraIndex::Index(index as u32);
+        let index = Self::device_index(index)?;
         let camera = Self::create_camera(&index)?;
         let resolution = camera.resolution();
         Ok(Resolution {
@@ -150,7 +165,20 @@ impl Cameras {
     }
 
     pub fn get_sync_cameras() -> Vec<DisplayInfo> {
-        SYNC_CAMERA_DISPLAYS.lock().unwrap().clone()
+        SYNC_CAMERAS
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, display)| display.clone())
+            .collect()
+    }
+
+    fn device_index(display: usize) -> ResultType<CameraIndex> {
+        let cameras = SYNC_CAMERAS.lock().unwrap();
+        match cameras.get(display) {
+            Some((index, _)) => Ok(index.clone()),
+            None => bail!("Camera selection is no longer available"),
+        }
     }
 
     pub fn get_capturer(current: usize) -> ResultType<Box<dyn TraitCapturer>> {
@@ -194,7 +222,7 @@ pub struct CameraCapturer;
 impl CameraCapturer {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn new(current: usize) -> ResultType<Self> {
-        let index = CameraIndex::Index(current as u32);
+        let index = Cameras::device_index(current)?;
         let camera = Cameras::create_camera(&index)?;
         Ok(CameraCapturer {
             camera,

@@ -189,10 +189,18 @@ mod cpal_impl {
         static ref HOST_SCREEN_CAPTURE_KIT: Result<Host, cpal::HostUnavailable> = cpal::host_from_id(cpal::HostId::ScreenCaptureKit);
     }
 
-    #[derive(Default)]
     pub struct State {
         stream: Option<(Box<dyn StreamTrait>, Arc<Message>)>,
         input_generation: usize,
+    }
+
+    impl Default for State {
+        fn default() -> Self {
+            Self {
+                stream: None,
+                input_generation: INPUT_GENERATION.load(Ordering::SeqCst),
+            }
+        }
     }
 
     impl super::service::Reset for State {
@@ -234,7 +242,7 @@ mod cpal_impl {
 
     pub fn run(sp: EmptyExtraFieldService, state: &mut State) -> ResultType<()> {
         let generation = INPUT_GENERATION.load(Ordering::SeqCst);
-        if state.input_generation == generation || state.stream.is_none() {
+        if state.input_generation == generation {
             run_serv_snapshot(sp, state)?;
         } else {
             run_restart(sp, state)?;
@@ -333,7 +341,7 @@ mod cpal_impl {
         }
         if device.is_none() && !audio_input.is_empty() {
             for d in HOST
-                .devices()
+                .input_devices()
                 .with_context(|| "Failed to get audio devices")?
             {
                 if d.name().unwrap_or("".to_owned()) == audio_input {
@@ -342,10 +350,12 @@ mod cpal_impl {
                 }
             }
         }
-        let device = device.unwrap_or(
-            HOST.default_input_device()
-                .with_context(|| "Failed to get default input device for loopback")?,
-        );
+        let device = match device {
+            Some(device) => device,
+            None => HOST
+                .default_input_device()
+                .with_context(|| "Failed to get default input device")?,
+        };
         log::info!("Input device: {}", device.name().unwrap_or("".to_owned()));
         let format = device
             .default_input_config()
