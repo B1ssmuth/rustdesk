@@ -154,7 +154,13 @@ void main() {
       final path = await files.createEmptyFile(parent, 'notes.txt');
       final empty = await files.readText(path);
       expect(empty.original, isEmpty);
-      await files.saveText(empty, 'keep me', TransferProgress());
+      final handle =
+          await files.client.open(path, mode: SftpFileOpenMode.write);
+      try {
+        await handle.writeBytes(Uint8List.fromList('keep me'.codeUnits));
+      } finally {
+        await handle.close();
+      }
       await expectLater(
           files.createEmptyFile(parent, 'notes.txt'),
           throwsA(isA<FileOperationError>().having(
