@@ -188,6 +188,11 @@ class _PeerTabPageState extends State<PeerTabPage>
     );
   }
 
+  void _setSidebarMode(_SidebarMode mode) {
+    setState(() => _sidebar = mode);
+    unawaited(bind.setLocalFlutterOption(k: _sidebarOption, v: mode.name));
+  }
+
   void _showSidebarOptions(PeerTabModel model, SshStrings labels) {
     showDialog<void>(
       context: context,
@@ -211,10 +216,8 @@ class _PeerTabPageState extends State<PeerTabPage>
                       title: Text(label),
                       onChanged: (value) {
                         if (!mounted || value == null) return;
-                        setState(() => _sidebar = value);
+                        _setSidebarMode(value);
                         updateDialog(() {});
-                        unawaited(bind.setLocalFlutterOption(
-                            k: _sidebarOption, v: value.name));
                       },
                     ),
                   const Divider(),
@@ -382,10 +385,18 @@ class _PeerTabPageState extends State<PeerTabPage>
                 Align(
                   alignment: Alignment.centerRight,
                   child: IconButton(
-                    tooltip: labels.text(
-                        'Sidebar options', 'Настройки боковой панели'),
-                    onPressed: () => _showSidebarOptions(model, labels),
-                    icon: const Icon(Icons.tune_rounded, size: 18),
+                    tooltip: hidden
+                        ? labels.text('Show sidebar', 'Показать боковую панель')
+                        : labels.text(
+                            'Sidebar options', 'Настройки боковой панели'),
+                    onPressed: hidden
+                        ? () => _setSidebarMode(_SidebarMode.full)
+                        : () => _showSidebarOptions(model, labels),
+                    icon: Icon(
+                        hidden
+                            ? Icons.view_sidebar_outlined
+                            : Icons.tune_rounded,
+                        size: 18),
                   ),
                 ),
                 Expanded(
