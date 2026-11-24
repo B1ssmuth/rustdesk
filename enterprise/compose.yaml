@@ -1,0 +1,58 @@
+name: yesdesk-management
+services:
+  db:
+    image: postgres:17.9
+    environment:
+      POSTGRES_DB: yesdesk
+      POSTGRES_USER: yesdesk
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes: [directory_db:/var/lib/postgresql/data]
+    networks: [database]
+    healthcheck:
+      test: [CMD, pg_isready, -U, yesdesk, -d, yesdesk]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+  migrate:
+    build: ./management
+    command: [python, migrate.py]
+    environment:
+      YESDESK_DATABASE_URL_FILE: /run/secrets/database_url
+    secrets: [database_url]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [database]
+    restart: "no"
+  api:
+    build: ./management
+    env_file: ${YESDESK_CONFIG:-test.env}
+    environment:
+      YESDESK_DATABASE_URL_FILE: /run/secrets/database_url
+    secrets: [database_url]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [database, edge]
+    ports: ["127.0.0.1:${YESDESK_HTTP_PORT:-18083}:8080"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 4s
+      retries: 5
+networks:
+  database:
+    internal: true
+  edge:
+volumes:
+  directory_db:
+secrets:
+  database_url:
+    file: ./secrets/database-url
+  db_password:
+    file: ./secrets/db-password
