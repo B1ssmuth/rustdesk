@@ -289,6 +289,12 @@ class PostgresTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT current FROM windows_sessions WHERE device_id=%s",
                                         (machine,)).fetchone(), (False,))
         self.assertEqual(client.post(path + "/revoke-agent", headers=authorization).status_code, 200)
+        self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 403)
+        self.assertEqual(client.put(path + "/corporate-policy", headers=authorization,
+                                    json={"attended": True}).status_code, 403)
+        with psycopg.connect(database_url()) as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM corporate_access_policy WHERE device_id=%s",
+                                         (machine,)).fetchone())
         self.assertEqual(client.post("/v2/agents/inventory", headers=headers, json=data).status_code, 403)
         self.assertEqual(client.post("/v2/agents/enroll", json=enrollment).status_code, 401)
 

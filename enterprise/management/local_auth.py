@@ -480,7 +480,8 @@ def install_routes(app, get_db, bearer):
         if until and not now < until <= now + timedelta(days=30):
             raise HTTPException(422, "Unattended approval must expire within 30 days")
         device = db.execute(
-            "SELECT 1 FROM devices WHERE id=%s AND enabled AND windows_enrollment FOR UPDATE",
+            "SELECT 1 FROM devices WHERE id=%s AND enabled AND windows_enrollment "
+            "AND agent_hash IS NOT NULL FOR UPDATE",
             (device_id,),
         ).fetchone()
         if not device:
