@@ -13,7 +13,7 @@ import jwt
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, IPvAnyAddress, StrictBool
 
 from settings import database_url, https_url
 from local_auth import install_routes, key
@@ -55,6 +55,8 @@ class WindowsInventory(Hardware):
     hostname: str = Field(min_length=1, max_length=255)
     domain: str = Field(max_length=255)
     sessions: list[WindowsSession] | None = Field(max_length=128)
+    agent_version: str | None = Field(default=None, max_length=40)
+    addresses: list[IPvAnyAddress] = Field(default_factory=list, max_length=64)
 
 
 class SessionEvent(Payload):
@@ -235,7 +237,7 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
     @app.get("/health/ready")
     def ready(db: Db):
         if not db.execute(
-            "SELECT 1 FROM schema_migrations WHERE name = '006_admin_pilot.sql'"
+            "SELECT 1 FROM schema_migrations WHERE name = '008_device_certificates.sql'"
         ).fetchone():
             raise HTTPException(503, "Database migration required")
         return {"status": "ok"}

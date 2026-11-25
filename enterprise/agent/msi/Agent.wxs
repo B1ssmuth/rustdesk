@@ -1,5 +1,5 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="YES Desk Windows Agent" Manufacturer="YES Apart" Version="1.0.0"
+  <Package Name="YES Desk Windows Agent" Manufacturer="YES Apart" Version="1.0.1"
            UpgradeCode="4250C5DB-5E09-44AB-816C-4082BB30DEB6" Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer YES Desk Agent is already installed." />
     <MediaTemplate EmbedCab="yes" />

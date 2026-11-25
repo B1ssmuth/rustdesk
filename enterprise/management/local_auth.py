@@ -2,6 +2,7 @@ import base64
 from getpass import getpass
 import hashlib
 import hmac
+import json
 import os
 from pathlib import Path
 import secrets
@@ -321,6 +322,7 @@ def install_routes(app, get_db, bearer):
 
     @app.post("/v2/devices/{device_id}/revoke-agent")
     def revoke_agent(device_id: UUID, db: Db, user: Annotated[dict, Depends(mutation_admin)]):
+        db.execute("UPDATE device_enrollment_certificates SET enabled=false WHERE device_id=%s", (device_id,))
         row = db.execute(
             "UPDATE devices SET agent_hash=NULL,enrollment_hash=NULL,enrollment_until=NULL,last_heartbeat=NULL "
             "WHERE id=%s RETURNING id", (device_id,),
@@ -357,6 +359,53 @@ def install_routes(app, get_db, bearer):
                ORDER BY favorite DESC,d.hostname,d.id LIMIT 100 OFFSET %(offset)s""",
             {"username": user["username"], "q": q, "offset": offset},
         ).fetchall()
+
+    @app.get("/v2/workspace")
+    def workspace(db: Db, user: Annotated[dict, Depends(directory)],
+                  q: Annotated[str, Query(max_length=100)] = "",
+                  ou: Annotated[str, Query(max_length=4096)] = "[]",
+                  favorites: bool = False,
+                  sort: Literal["hostname", "heartbeat"] = "hostname",
+                  offset: Annotated[int, Query(ge=0)] = 0):
+        try:
+            units = json.loads(ou)
+            if not isinstance(units, list) or not all(isinstance(unit, str) for unit in units):
+                raise ValueError()
+        except ValueError:
+            raise HTTPException(422, "Invalid OU path") from None
+        rows = db.execute(
+            """WITH a AS (SELECT *,count(*) OVER (PARTITION BY lower(dns_name)) AS candidates
+                          FROM ad_workstations),
+               d AS (SELECT *,count(*) OVER (PARTITION BY lower(rtrim(dns_name,'.'))) AS candidates
+                     FROM devices WHERE enabled),
+               projected AS (
+                  SELECT a.object_id AS ad_id,d.id AS device_id,
+                     COALESCE(d.hostname,a.hostname) AS hostname,
+                     COALESCE(d.dns_name,a.dns_name) AS dns_name,
+                     COALESCE(a.ou_path,'{}') AS ou_path,d.yesdesk_id,d.last_heartbeat,
+                     d.agent_hash IS NOT NULL AS agent_registered,COALESCE(d.metadata,'{}') AS metadata,
+                     COALESCE(p.favorite,false) AS favorite,COALESCE(p.group_name,'') AS group_name,
+                     (SELECT w.username FROM windows_sessions w WHERE w.device_id=d.id
+                      ORDER BY w.current DESC,w.logon_at DESC LIMIT 1) AS windows_user
+                  FROM a FULL OUTER JOIN d
+                    ON (CASE WHEN a.candidates=1 AND a.dns_name<>'' THEN lower(a.dns_name) END)
+                       = (CASE WHEN d.candidates=1 THEN lower(rtrim(d.dns_name,'.')) END)
+                  LEFT JOIN local_device_preferences p ON p.device_id=d.id AND p.username=%(username)s
+               )
+               SELECT * FROM projected
+               WHERE (NOT %(favorites)s OR favorite)
+                 AND (%(depth)s=0 OR ou_path[1:%(depth)s]=%(units)s::text[])
+                 AND (%(q)s='' OR strpos(lower(concat_ws(' ',hostname,dns_name,windows_user,
+                      yesdesk_id,metadata->'addresses',array_to_string(ou_path,' '))),lower(%(q)s))>0)
+               ORDER BY CASE WHEN %(sort)s='heartbeat' THEN last_heartbeat END DESC NULLS LAST,
+                        lower(hostname),device_id,ad_id LIMIT 101 OFFSET %(offset)s""",
+            dict(username=user["username"], q=q, favorites=favorites, units=units,
+                 depth=len(units), sort=sort, offset=offset),
+        ).fetchall()
+        paths = db.execute("SELECT DISTINCT ou_path FROM ad_workstations ORDER BY ou_path").fetchall()
+        sync = db.execute("SELECT attempted_at,successful_at,result,computer_count FROM ad_sync_status").fetchone()
+        return {"rows": rows[:100], "has_next": len(rows) > 100,
+                "ou_paths": [row["ou_path"] for row in paths], "sync": sync}
 
     @app.get("/v2/devices/{device_id}/history")
     def history(device_id: UUID, db: Db, user: Annotated[dict, Depends(directory)]):

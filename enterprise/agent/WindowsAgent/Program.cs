@@ -1,7 +1,10 @@
 using Microsoft.Win32;
 using System.Management;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.ServiceProcess;
@@ -10,7 +13,7 @@ using System.Text.Json;
 
 if (args is ["--version"])
 {
-    Console.WriteLine("YES Desk Windows Agent 1.0.0");
+    Console.WriteLine("YES Desk Windows Agent 1.0.1");
     return;
 }
 ServiceBase.Run(new AgentService());
@@ -71,7 +74,14 @@ sealed class AgentService : ServiceBase
                 {
                     MachineGuid = guid, Hostname = Environment.MachineName, Domain = machine[1],
                     Model = machine[0], RamBytes = long.Parse(machine[2]), Cpu = cpu[0],
-                    Os = $"{os[0]} {os[1]}", Disks = disks, Sessions = Wts.Snapshot()
+                    Os = $"{os[0]} {os[1]}", Disks = disks, Sessions = Wts.Snapshot(),
+                    AgentVersion = "1.0.1",
+                    Addresses = NetworkInterface.GetAllNetworkInterfaces()
+                        .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up)
+                        .SelectMany(adapter => adapter.GetIPProperties().UnicastAddresses)
+                        .Select(address => address.Address)
+                        .Where(address => !IPAddress.IsLoopback(address) && !address.IsIPv6LinkLocal)
+                        .Select(address => address.ToString()).Distinct().Take(64).ToArray()
                 }, options: Json);
                 using var response = await client.SendAsync(request, stop.Token);
                 response.EnsureSuccessStatusCode();
@@ -97,7 +107,7 @@ sealed class AgentService : ServiceBase
         }
     }
 
-    private sealed record Config(string Api);
+    private sealed record Config(string Api, string? Broker, string? ClientCertificateIssuer);
 
     private static Config ReadConfig()
     {
@@ -111,10 +121,20 @@ sealed class AgentService : ServiceBase
                 throw new InvalidDataException();
         var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(Path.Combine(Root, "config.json")), Json)
             ?? throw new InvalidDataException();
-        var uri = new Uri(config.Api);
+        ValidateHttps(config.Api);
+        if (config.Broker is not null)
+        {
+            ValidateHttps(config.Broker);
+            if (string.IsNullOrWhiteSpace(config.ClientCertificateIssuer)) throw new InvalidDataException();
+        }
+        return config;
+    }
+
+    private static void ValidateHttps(string address)
+    {
+        var uri = new Uri(address);
         if (uri.Scheme != "https" || uri.UserInfo.Length + uri.Query.Length + uri.Fragment.Length != 0)
             throw new InvalidDataException();
-        return config;
     }
 
     private static bool TrustedAcl(FileSystemSecurity acl)
@@ -133,6 +153,7 @@ sealed class AgentService : ServiceBase
     {
         var state = Path.Combine(Root, "agent.token");
         if (File.Exists(state)) return Unprotect(state);
+        if (config.Broker is not null) return await BrokerCredentialAsync(config, guid, state, cancel);
         var enrollment = Path.Combine(Root, "enrollment.token");
         using var response = await client.PostAsJsonAsync(Endpoint(config, "enroll"),
             new { DeviceId = guid, EnrollmentCode = Unprotect(enrollment) }, Json, cancel);
@@ -141,11 +162,53 @@ sealed class AgentService : ServiceBase
         var token = body.RootElement.GetProperty("agent_token").GetString() ?? throw new InvalidDataException();
         if (token.Length != 43 || token.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '_' or '-')))
             throw new InvalidDataException();
-        var pending = state + ".new";
-        File.WriteAllBytes(pending, ProtectedData.Protect(Encoding.ASCII.GetBytes(token), null, DataProtectionScope.LocalMachine));
-        File.Move(pending, state, true);
+        Protect(state, token);
         File.Delete(enrollment);
         return token;
+    }
+
+    private static async Task<string> BrokerCredentialAsync(Config config, Guid guid, string state, CancellationToken cancel)
+    {
+        using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+        store.Open(OpenFlags.ReadOnly);
+        var available = store.Certificates;
+        try
+        {
+            var now = DateTime.Now;
+            var matching = available.Cast<X509Certificate2>().Where(cert =>
+                cert.HasPrivateKey && cert.NotBefore <= now && cert.NotAfter > now &&
+                string.Equals(cert.Issuer, config.ClientCertificateIssuer, StringComparison.OrdinalIgnoreCase) &&
+                cert.Extensions.OfType<X509EnhancedKeyUsageExtension>().Any(usage =>
+                    usage.EnhancedKeyUsages.Cast<Oid>().Any(oid => oid.Value == "1.3.6.1.5.5.7.3.2"))).ToArray();
+            if (matching.Length != 1) throw new InvalidDataException();
+            using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+            handler.ClientCertificates.Add(matching[0]);
+            using var broker = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(12) };
+            var pending = state + ".pending";
+            if (!File.Exists(pending))
+            {
+                var fresh = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+                    .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+                Protect(pending, fresh);
+            }
+            var token = Unprotect(pending);
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(token))).ToLowerInvariant();
+            using var response = await broker.PostAsJsonAsync(config.Broker!.TrimEnd('/') + "/enroll",
+                new { MachineGuid = guid, TokenHash = hash }, Json, cancel);
+            response.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancel));
+            if (!body.RootElement.GetProperty("registered").GetBoolean()) throw new InvalidDataException();
+            File.Move(pending, state, false);
+            return token;
+        }
+        finally { foreach (var cert in available) cert.Dispose(); }
+    }
+
+    private static void Protect(string path, string token)
+    {
+        var pending = path + ".new";
+        File.WriteAllBytes(pending, ProtectedData.Protect(Encoding.ASCII.GetBytes(token), null, DataProtectionScope.LocalMachine));
+        File.Move(pending, path, true);
     }
 
     private static string Unprotect(string path) =>

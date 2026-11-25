@@ -2,12 +2,18 @@
 #Requires -RunAsAdministrator
 param(
     [Parameter(Mandatory)][uri] $Api,
-    [securestring] $EnrollmentCode
+    [securestring] $EnrollmentCode,
+    [uri] $Broker,
+    [string] $CertificateIssuer
 )
 
 $ErrorActionPreference = 'Stop'
 if (!$IsWindows -or !$Api.IsAbsoluteUri -or $Api.Scheme -ne 'https' -or $Api.UserInfo -or
     $Api.Query -or $Api.Fragment) { throw 'An approved HTTPS Management API URL is required.' }
+if ($Broker -and ($EnrollmentCode -or !$CertificateIssuer -or !$Broker.IsAbsoluteUri -or
+    $Broker.Scheme -ne 'https' -or $Broker.UserInfo -or $Broker.Query -or $Broker.Fragment)) {
+    throw 'Certificate enrollment requires HTTPS and an approved issuer without a manual code.'
+}
 $root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'YESDeskAgent'
 $admin = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $system = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
@@ -45,6 +51,18 @@ foreach ($entry in Get-ChildItem -LiteralPath $root -Force) {
 }
 if (Test-Path -LiteralPath (Join-Path $root 'agent.token')) {
     throw 'This device already has an identity. Rotate it using the documented operator procedure.'
+}
+if ($Broker) {
+    $config = Join-Path $root 'config.json'
+    @{
+        api = $Api.AbsoluteUri.TrimEnd('/')
+        broker = $Broker.AbsoluteUri.TrimEnd('/')
+        client_certificate_issuer = $CertificateIssuer
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath $config -Encoding utf8NoBOM
+    $configAcl = Get-Acl -LiteralPath $config
+    $configAcl.SetOwner($admin)
+    Set-Acl -LiteralPath $config -AclObject $configAcl
+    return
 }
 if (!$EnrollmentCode) { $EnrollmentCode = Read-Host 'Device-specific enrollment code' -AsSecureString }
 $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($EnrollmentCode)

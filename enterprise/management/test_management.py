@@ -6,7 +6,7 @@ import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.fernet import Fernet
@@ -16,6 +16,7 @@ import psycopg
 
 from app import create_app, role_for
 from local_auth import hash_password, token_hash, totp_code
+from enrollment_broker import register
 from migrate import migrate
 from provision import apply_directory, issue_test_code
 from settings import database_url
@@ -331,6 +332,52 @@ class PostgresTests(unittest.TestCase):
         with psycopg.connect(database_url()) as db:
             apply_directory(db, self.snapshot)
         self.assertEqual(redeem(demoted).status_code, 403)
+
+
+    def test_workspace_sources_and_certificate_bootstrap(self):
+        client = TestClient(create_app(None, None, None, {}, enrolled_agents=True))
+        operator = "ls_" + "Y" * 43
+        matched, ad_only = uuid4(), uuid4()
+        with psycopg.connect(database_url()) as db:
+            db.execute("TRUNCATE ad_workstations")
+            db.execute("TRUNCATE ad_sync_status")
+            db.execute("INSERT INTO local_accounts(username,display_name,role,password_hash) "
+                       "VALUES ('workspace-test','Workspace','admin','fixture')")
+            db.execute("INSERT INTO local_sessions VALUES (%s,'workspace-test',now()+interval '1 minute')",
+                       (token_hash(operator),))
+        headers = {"Authorization": "Bearer " + operator}
+        response = client.get("/v2/workspace", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(response.json()["sync"])
+        self.assertEqual([row["device_id"] for row in response.json()["rows"]], [self.device])
+        with psycopg.connect(database_url()) as db:
+            db.execute("INSERT INTO ad_workstations VALUES (%s,%s,%s,%s)",
+                       (matched, "workstation.example.test", "MATCH", ["Workstations", "North"]))
+            db.execute("INSERT INTO ad_workstations VALUES (%s,%s,%s,%s)",
+                       (ad_only, "directory-only.example.test", "DIRECTORY", ["Workstations", "South"]))
+            db.execute("INSERT INTO ad_sync_status VALUES (true,now(),now(),'failed',2)")
+            db.execute("UPDATE devices SET windows_enrollment=true,metadata='{\"addresses\":[\"192.0.2.41\"]}' "
+                       "WHERE id=%s", (self.device,))
+            db.execute("INSERT INTO device_enrollment_certificates(fingerprint,device_id,enrollment_until) "
+                       "VALUES (%s,%s,now()+interval '1 hour')", ("a"*64, self.device))
+            self.assertFalse(register(db, "b"*64, UUID(self.device), "f"*64))
+            self.assertFalse(register(db, "a"*64, uuid4(), "f"*64))
+            self.assertTrue(register(db, "a"*64, UUID(self.device), "f"*64))
+            self.assertTrue(register(db, "a"*64, UUID(self.device), "f"*64))
+            self.assertFalse(register(db, "a"*64, UUID(self.device), "e"*64))
+        merged = client.get("/v2/workspace", headers=headers).json()
+        self.assertEqual(merged["sync"]["result"], "failed")
+        self.assertEqual(len(merged["rows"]), 2)
+        self.assertTrue(any(row["device_id"] == self.device and row["ad_id"] == str(matched)
+                            for row in merged["rows"]))
+        self.assertTrue(any(row["device_id"] is None and row["ad_id"] == str(ad_only)
+                            for row in merged["rows"]))
+        self.assertEqual(len(client.get("/v2/workspace?q=192.0.2.41", headers=headers).json()["rows"]), 1)
+        self.assertEqual(len(client.get("/v2/workspace", headers=headers,
+                              params={"ou": '["Workstations","South"]'}).json()["rows"]), 1)
+        self.assertEqual(client.post(f"/v2/devices/{self.device}/revoke-agent", headers=headers).status_code, 200)
+        with psycopg.connect(database_url()) as db:
+            self.assertFalse(register(db, "a"*64, UUID(self.device), "f"*64))
 
 
 if __name__ == "__main__":
