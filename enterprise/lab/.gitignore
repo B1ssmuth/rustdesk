@@ -1,0 +1,4 @@
+/state/
+/.lab-state.*/
+/*.tar
+/.env

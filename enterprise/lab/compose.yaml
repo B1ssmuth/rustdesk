@@ -1,0 +1,105 @@
+name: yesdesk38-lab
+x-management: &management
+  image: yesdesk38-lab/management:local
+  pull_policy: never
+  user: "${LAB_UID:?set by start-backend.sh}:${LAB_GID:?set by start-backend.sh}"
+  environment:
+    YESDESK_ENV: dev
+    YESDESK_LOCAL_AUTH: "1"
+    YESDESK_LEGACY_OIDC: "0"
+    YESDESK_WINDOWS_AGENTS: "1"
+    YESDESK_DATABASE_URL_FILE: /lab/database-url
+    YESDESK_MFA_KEY_FILE: /lab/mfa-key
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  networks: [database]
+
+services:
+  db:
+    image: yesdesk38-lab/postgres:local
+    pull_policy: never
+    environment:
+      POSTGRES_DB: yesdesk_lab
+      POSTGRES_USER: yesdesk_lab
+      POSTGRES_PASSWORD_FILE: /run/secrets/db-password
+    volumes:
+      - ./state/db-password:/run/secrets/db-password:ro
+      - postgres_data:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: [CMD, pg_isready, -U, yesdesk_lab, -d, yesdesk_lab]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *management
+    command: [python, migrate.py]
+    volumes:
+      - ./state/database-url:/lab/database-url:ro
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    <<: *management
+    command: [uvicorn, "app:production_app", --factory, --host, 0.0.0.0, --port, "8443", --ssl-keyfile, /lab/api.key, --ssl-certfile, /lab/api.crt, --no-proxy-headers, --no-access-log]
+    volumes:
+      - ./state/database-url:/lab/database-url:ro
+      - ./state/mfa-key:/lab/mfa-key:ro
+      - ./state/api.key:/lab/api.key:ro
+      - ./state/api.crt:/lab/api.crt:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports: ["192.168.237.10:8443:8443"]
+    networks: [database, private_lab]
+  broker:
+    <<: *management
+    command: [python, enrollment_broker.py]
+    environment:
+      YESDESK_ENV: dev
+      YESDESK_DATABASE_URL_FILE: /lab/database-url
+      YESDESK_BROKER_BIND: 0.0.0.0
+      YESDESK_BROKER_CERT: /lab/broker.crt
+      YESDESK_BROKER_KEY: /lab/broker.key
+      YESDESK_BROKER_CLIENT_CA: /lab/device-ca.crt
+    volumes:
+      - ./state/database-url:/lab/database-url:ro
+      - ./state/broker.key:/lab/broker.key:ro
+      - ./state/broker.crt:/lab/broker.crt:ro
+      - ./state/device-ca.crt:/lab/device-ca.crt:ro
+      - ./state/approvals:/approvals:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports: ["192.168.237.10:18443:18443"]
+    networks: [database, private_lab]
+  hbbs:
+    image: yesdesk38-lab/rustdesk-server:local
+    pull_policy: never
+    command: [hbbs, -r, "192.168.237.10:21117", -k, _]
+    volumes: ["rustdesk_data:/root"]
+    ports: ["192.168.237.10:21115:21115", "192.168.237.10:21116:21116", "192.168.237.10:21116:21116/udp"]
+    networks: [private_lab]
+    healthcheck:
+      test: [CMD-SHELL, "test -s /root/id_ed25519.pub"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  hbbr:
+    image: yesdesk38-lab/rustdesk-server:local
+    pull_policy: never
+    command: [hbbr, -k, _]
+    volumes: ["rustdesk_data:/root"]
+    ports: ["192.168.237.10:21117:21117"]
+    depends_on:
+      hbbs:
+        condition: service_healthy
+    networks: [private_lab]
+networks:
+  database:
+    internal: true
+  private_lab: {}
+volumes:
+  postgres_data: {}
+  rustdesk_data: {}
