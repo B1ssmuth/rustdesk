@@ -162,11 +162,24 @@ class PostgresTests(unittest.TestCase):
                                (hash_password("local test admin password"), cipher.encrypt(secret)))
                 base = {"username": "local-admin", "password": "local test admin password"}
                 self.assertEqual(client.post("/v2/auth/login", json=base).status_code, 401)
-                login = {**base, "code": totp_code(secret, int(time.time()) // 30)}
+                step = int(time.time()) // 30
+                invalid = next(f"{value:06}" for value in range(5)
+                               if f"{value:06}" not in {totp_code(secret, s) for s in (step-1,step,step+1)})
+                login = {**base, "code": totp_code(secret, step)}
+                self.assertEqual(client.post("/v2/auth/login", json={**login, "password": "wrong"}).status_code, 401)
+                self.assertEqual(client.post("/v2/auth/login", json={**login, "code": invalid}).status_code, 401)
                 result = client.post("/v2/auth/login", json=login)
                 self.assertEqual(result.status_code, 200, result.text)
                 adm = {"Authorization": "Bearer " + result.json()["token"]}
                 self.assertEqual(client.post("/v2/auth/login", json=login).status_code, 401)
+                listed = client.get("/v2/accounts?q=lab", headers=adm).json()
+                self.assertEqual(listed, [dict(username="local-admin", display_name="Lab Admin",
+                                               role="admin", enabled=True, mfa_state="configured")])
+                self.assertEqual(client.delete("/v2/accounts/local-admin", headers=adm).status_code, 405)
+                self.assertEqual(client.put("/v2/accounts/local-admin", headers=adm,
+                                            json={"enabled": False}).status_code, 409)
+                self.assertEqual(client.patch("/v2/accounts/local-admin", headers=adm,
+                                              json={"display_name": "Admin", "role": "user"}).status_code, 409)
                 user = {"username": "local-user", "password": "local test user password"}
                 self.assertEqual(client.post("/v2/accounts", headers=adm,
                                              json={**user, "display_name": "User", "role": "user"}).status_code, 201)
@@ -176,6 +189,32 @@ class PostgresTests(unittest.TestCase):
                 self.assertEqual(client.put("/v2/accounts/local-user", headers=adm,
                                             json={"enabled": False}).status_code, 200)
                 self.assertEqual(client.get("/v2/auth/me", headers=headers).status_code, 401)
+                self.assertEqual(client.put("/v2/accounts/local-user", headers=adm,
+                                            json={"enabled": True}).status_code, 200)
+                headers = {"Authorization": "Bearer " + client.post("/v2/auth/login", json=user).json()["token"]}
+                self.assertEqual(client.post("/v2/accounts/local-user/revoke-sessions", headers=adm).status_code, 200)
+                self.assertEqual(client.get("/v2/auth/me", headers=headers).status_code, 401)
+                headers = {"Authorization": "Bearer " + client.post("/v2/auth/login", json=user).json()["token"]}
+                self.assertEqual(client.patch("/v2/accounts/local-user", headers=adm,
+                                              json={"display_name": "Help Desk", "role": "support"}).status_code, 200)
+                self.assertEqual(client.get("/v2/auth/me", headers=headers).status_code, 401)
+                with psycopg.connect(database_url()) as db:
+                    db.execute("UPDATE local_accounts SET totp_secret=%s WHERE username='local-user'",
+                              (cipher.encrypt(b"support-fixture-secret"),))
+                    # Simulate reaching the next unused TOTP interval without sleeping.
+                    db.execute("UPDATE local_accounts SET totp_step=%s WHERE username='local-admin'", (step-1,))
+                support = client.post("/v2/auth/login", json={**user, "code": totp_code(b"support-fixture-secret",
+                                                                                     int(time.time()) // 30)})
+                self.assertEqual(support.status_code, 200, support.text)
+                sup = {"Authorization": "Bearer " + support.json()["token"]}
+                self.assertEqual(client.get("/v2/accounts", headers=sup).status_code, 403)
+                self.assertEqual(client.patch("/v2/accounts/local-admin", headers=sup,
+                                              json={"display_name": "Changed", "role": "user"}).status_code, 403)
+                reset = client.post("/v2/accounts/local-user/request-mfa-reset", headers=adm,
+                                    json={"password": base["password"], "code": login["code"]})
+                self.assertEqual(reset.status_code, 200, reset.text)
+                self.assertEqual(reset.json(), {"mfa_state": "reset_pending"})
+                self.assertEqual(client.get("/v2/auth/me", headers=sup).status_code, 401)
                 self.assertEqual(client.post("/v2/auth/logout", headers=adm).status_code, 200)
                 self.assertEqual(client.get("/v2/auth/me", headers=adm).status_code, 401)
                 for _ in range(8):
@@ -213,7 +252,9 @@ class PostgresTests(unittest.TestCase):
         directory = client.get("/v2/devices?q=WINTEST", headers=authorization)
         self.assertEqual(directory.status_code, 200, directory.text)
         self.assertEqual([row["id"] for row in directory.json()], [machine])
-        self.assertEqual(client.get("/v2/devices?offset=1", headers=authorization).json(), [])
+        self.assertEqual(client.get("/v2/devices?q=WINTEST&offset=1", headers=authorization).json(), [])
+        rows = client.get("/v2/devices", headers=authorization).json()
+        self.assertTrue(any(row["id"] == self.device and not row["agent_registered"] for row in rows))
         path = f"/v2/devices/{machine}"
         self.assertEqual(client.get(path + "/history", headers=authorization).json()[0]["current"], True)
         self.assertEqual(client.put(path + "/preferences", headers=authorization,
@@ -229,6 +270,9 @@ class PostgresTests(unittest.TestCase):
         with psycopg.connect(database_url()) as db:
             self.assertEqual(db.execute("SELECT current FROM windows_sessions WHERE device_id=%s",
                                         (machine,)).fetchone(), (False,))
+        self.assertEqual(client.post(path + "/revoke-agent", headers=authorization).status_code, 200)
+        self.assertEqual(client.post("/v2/agents/inventory", headers=headers, json=data).status_code, 403)
+        self.assertEqual(client.post("/v2/agents/enroll", json=enrollment).status_code, 401)
 
     def test_lab_grants_are_bound_single_use_expiring_and_revocable(self):
         enrollment = self.client.post("/v1/agents/enroll", json={

@@ -44,6 +44,16 @@ class AccountState(BaseModel):
     enabled: bool
 
 
+class AccountEdit(BaseModel):
+    display_name: str = Field(min_length=1, max_length=128)
+    role: Literal["admin", "support", "user"]
+
+
+class AdminProof(BaseModel):
+    password: SecretStr = Field(min_length=1, max_length=256)
+    code: SecretStr = Field(min_length=6, max_length=6)
+
+
 class PasswordChange(BaseModel):
     current: SecretStr = Field(min_length=1, max_length=256)
     replacement: SecretStr = Field(min_length=14, max_length=256)
@@ -85,6 +95,19 @@ def totp_code(secret, step):
     offset = digest[-1] & 15
     value = int.from_bytes(digest[offset:offset+4], "big") & 0x7fffffff
     return f"{value % 1_000_000:06}"
+
+
+def consume_totp(db, user, code):
+    if not user["totp_secret"] or not code or not code.isascii() or not code.isdigit():
+        return False
+    now = int(time.time()) // 30
+    secret = key().decrypt(bytes(user["totp_secret"]))
+    for step in (now-1, now, now+1):
+        if step > user["totp_step"] and hmac.compare_digest(totp_code(secret, step), code):
+            db.execute("UPDATE local_accounts SET totp_step=%s WHERE username=%s",
+                       (step, user["username"]))
+            return True
+    return False
 
 
 def write_audit(db, username, action, target, outcome):
@@ -142,6 +165,30 @@ def install_routes(app, get_db, bearer):
             raise HTTPException(403, "Administrator required")
         return user
 
+    def mutation_admin(db: Db, cred: Cred):
+        # Serialize mutations and revalidate the session after acquiring the lock.
+        db.execute("SELECT pg_advisory_xact_lock(8143025)")
+        return admin(current_local(db, cred.credentials))
+
+    def target_account(db, username):
+        row = db.execute(
+            "SELECT * FROM local_accounts WHERE username=%s FOR UPDATE", (username,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Account unavailable")
+        return row
+
+    def require_other_admin(db, actor, row, action):
+        if row["role"] != "admin" or not row["enabled"]:
+            return
+        if not db.execute(
+            "SELECT 1 FROM local_accounts WHERE username<>%s AND enabled AND role='admin' "
+            "AND totp_secret IS NOT NULL LIMIT 1", (row["username"],),
+        ).fetchone():
+            write_audit(db, actor, action, row["username"], "last_admin_denied")
+            db.commit()
+            raise HTTPException(409, "At least one enabled administrator with MFA is required")
+
     @app.post("/v2/auth/login")
     def login(payload: Login, db: Db):
         limit_attempt(db, payload.username)
@@ -151,18 +198,7 @@ def install_routes(app, get_db, bearer):
                                payload.password.get_secret_value())
         if valid and user and user["enabled"]:
             if user["role"] in ("admin", "support"):
-                valid = False
-                if user["totp_secret"] and payload.code:
-                    code = payload.code.get_secret_value()
-                    if code.isascii() and code.isdigit():
-                        now = int(time.time()) // 30
-                        secret = key().decrypt(bytes(user["totp_secret"]))
-                        for step in (now-1, now, now+1):
-                            if step > user["totp_step"] and hmac.compare_digest(totp_code(secret, step), code):
-                                db.execute("UPDATE local_accounts SET totp_step=%s WHERE username=%s",
-                                           (step, payload.username))
-                                valid = True
-                                break
+                valid = consume_totp(db, user, payload.code.get_secret_value() if payload.code else None)
             if valid:
                 token = "ls_" + secrets.token_urlsafe(32)
                 db.execute("DELETE FROM local_sessions WHERE expires_at <= now()")
@@ -202,7 +238,7 @@ def install_routes(app, get_db, bearer):
         return {"status": "ok"}
 
     @app.post("/v2/accounts", status_code=201)
-    def create(payload: Account, db: Db, user: Annotated[dict, Depends(admin)]):
+    def create(payload: Account, db: Db, user: Annotated[dict, Depends(mutation_admin)]):
         try:
             encoded = hash_password(payload.password.get_secret_value())
         except ValueError as error:
@@ -219,16 +255,81 @@ def install_routes(app, get_db, bearer):
 
     @app.put("/v2/accounts/{username}")
     def set_enabled(username: str, payload: AccountState, db: Db,
-                    user: Annotated[dict, Depends(admin)]):
-        if username == user["username"]:
-            raise HTTPException(409, "Cannot block your own account")
-        row = db.execute("UPDATE local_accounts SET enabled=%s WHERE username=%s RETURNING username",
-                         (payload.enabled, username)).fetchone()
-        if not row:
-            raise HTTPException(404, "Account unavailable")
+                    user: Annotated[dict, Depends(mutation_admin)]):
+        target = target_account(db, username)
+        if not payload.enabled:
+            require_other_admin(db, user["username"], target, "set_account_enabled")
+        db.execute("UPDATE local_accounts SET enabled=%s WHERE username=%s", (payload.enabled, username))
         db.execute("DELETE FROM local_sessions WHERE username=%s", (username,))
         write_audit(db, user["username"], "set_account_enabled", username, str(payload.enabled))
-        return row
+        return {"username": username}
+
+    @app.get("/v2/accounts")
+    def accounts(db: Db, user: Annotated[dict, Depends(admin)],
+                 q: Annotated[str, Query(max_length=100)] = "",
+                 offset: Annotated[int, Query(ge=0)] = 0):
+        return db.execute(
+            """SELECT username,display_name,role,enabled,
+                      CASE WHEN mfa_reset_requested_at IS NOT NULL THEN 'reset_pending'
+                           WHEN totp_secret IS NOT NULL THEN 'configured'
+                           WHEN role IN ('admin','support') THEN 'setup_required'
+                           ELSE 'not_required' END AS mfa_state
+               FROM local_accounts WHERE %s='' OR strpos(username,lower(%s))>0
+                 OR strpos(lower(display_name),lower(%s))>0
+               ORDER BY username LIMIT 100 OFFSET %s""", (q, q, q, offset),
+        ).fetchall()
+
+    @app.patch("/v2/accounts/{username}")
+    def edit(username: str, payload: AccountEdit, db: Db,
+             user: Annotated[dict, Depends(mutation_admin)]):
+        row = target_account(db, username)
+        if row["role"] != payload.role:
+            require_other_admin(db, user["username"], row, "change_role")
+            db.execute("DELETE FROM local_sessions WHERE username=%s", (username,))
+        db.execute("UPDATE local_accounts SET display_name=%s,role=%s WHERE username=%s",
+                   (payload.display_name, payload.role, username))
+        write_audit(db, user["username"], "edit_account", username, f"role:{payload.role}")
+        return {"username": username}
+
+    @app.post("/v2/accounts/{username}/revoke-sessions")
+    def revoke_sessions(username: str, db: Db, user: Annotated[dict, Depends(mutation_admin)]):
+        target_account(db, username)
+        db.execute("DELETE FROM local_sessions WHERE username=%s", (username,))
+        write_audit(db, user["username"], "revoke_sessions", username, "allowed")
+        return {"username": username}
+
+    @app.post("/v2/accounts/{username}/request-mfa-reset")
+    def request_mfa_reset(username: str, payload: AdminProof, db: Db, cred: Cred,
+                          user: Annotated[dict, Depends(admin)]):
+        limit_attempt(db, user["username"])
+        user = mutation_admin(db, cred)
+        actor = target_account(db, user["username"])
+        if (not check_password(actor["password_hash"], payload.password.get_secret_value()) or
+                not consume_totp(db, actor, payload.code.get_secret_value())):
+            write_audit(db, user["username"], "request_mfa_reset", username, "proof_denied")
+            db.commit()
+            raise HTTPException(401, "Administrator verification failed")
+        target = target_account(db, username)
+        if target["role"] not in ("admin", "support"):
+            raise HTTPException(409, "Privileged account required")
+        require_other_admin(db, user["username"], target, "request_mfa_reset")
+        db.execute("UPDATE local_accounts SET totp_secret=NULL,totp_step=-1,"
+                   "mfa_reset_requested_at=clock_timestamp() WHERE username=%s", (username,))
+        db.execute("DELETE FROM local_sessions WHERE username=%s", (username,))
+        write_audit(db, user["username"], "request_mfa_reset", username, "pending_operator")
+        return {"mfa_state": "reset_pending"}
+
+    @app.post("/v2/devices/{device_id}/revoke-agent")
+    def revoke_agent(device_id: UUID, db: Db, user: Annotated[dict, Depends(mutation_admin)]):
+        row = db.execute(
+            "UPDATE devices SET agent_hash=NULL,enrollment_hash=NULL,enrollment_until=NULL,last_heartbeat=NULL "
+            "WHERE id=%s RETURNING id", (device_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Device unavailable")
+        db.execute("UPDATE windows_sessions SET current=false WHERE device_id=%s AND current", (device_id,))
+        write_audit(db, user["username"], "revoke_agent", device_id, "allowed")
+        return {"id": device_id}
 
     @app.get("/v2/devices")
     def devices(db: Db, user: Annotated[dict, Depends(directory)], q: str = "",
@@ -237,13 +338,16 @@ def install_routes(app, get_db, bearer):
             raise HTTPException(422, "Search term too long")
         return db.execute(
             """SELECT d.id,d.hostname,d.dns_name,d.yesdesk_id,d.metadata,d.last_heartbeat,
+                      d.agent_hash IS NOT NULL AS agent_registered,
+                      (SELECT w.username FROM windows_sessions w WHERE w.device_id=d.id
+                       ORDER BY w.current DESC,w.logon_at DESC,w.session_id LIMIT 1) AS windows_user,
                       COALESCE(d.last_heartbeat > now()-interval '2 minutes',false) AS online,
                       COALESCE(p.favorite,false) AS favorite, COALESCE(p.group_name,'') AS group_name,
                       g.device_id IS NOT NULL AS can_request_consent
                FROM devices d LEFT JOIN local_device_preferences p
                  ON p.device_id=d.id AND p.username=%(username)s
                LEFT JOIN local_device_grants g ON g.device_id=d.id AND g.username=%(username)s
-               WHERE d.enabled AND d.agent_hash IS NOT NULL AND
+               WHERE d.enabled AND
                  (%(q)s='' OR strpos(lower(d.hostname), lower(%(q)s))>0
                    OR strpos(lower(d.yesdesk_id), lower(%(q)s))>0
                    OR EXISTS (SELECT 1 FROM windows_sessions w
@@ -353,11 +457,12 @@ def cli():
         if args.operation == "bootstrap":
             if db.execute("SELECT 1 FROM local_accounts WHERE role='admin'").fetchone():
                 parser.error("Administrator already provisioned")
-            db.execute("INSERT INTO local_accounts VALUES (%s,%s,'admin',%s,%s,-1,true)",
+            db.execute("INSERT INTO local_accounts(username,display_name,role,password_hash,totp_secret) "
+                       "VALUES (%s,%s,'admin',%s,%s)",
                        (args.username, args.username, encoded, encrypted))
         else:
             updated = db.execute(
-                "UPDATE local_accounts SET password_hash=%s,totp_secret=%s,totp_step=-1 "
+                "UPDATE local_accounts SET password_hash=%s,totp_secret=%s,totp_step=-1,mfa_reset_requested_at=NULL "
                 "WHERE username=%s AND enabled AND role IN ('admin','support') RETURNING username",
                 (encoded, encrypted, args.username),
             ).fetchone()

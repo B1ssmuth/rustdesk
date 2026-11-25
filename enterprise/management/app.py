@@ -235,7 +235,7 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
     @app.get("/health/ready")
     def ready(db: Db):
         if not db.execute(
-            "SELECT 1 FROM schema_migrations WHERE name = '005_agent_inventory.sql'"
+            "SELECT 1 FROM schema_migrations WHERE name = '006_admin_pilot.sql'"
         ).fetchone():
             raise HTTPException(503, "Database migration required")
         return {"status": "ok"}
