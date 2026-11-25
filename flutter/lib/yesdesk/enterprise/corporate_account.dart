@@ -11,6 +11,69 @@ class CorporateAccount extends StatefulWidget {
 
 class _CorporateAccountState extends State<CorporateAccount> {
   bool _failed = false;
+  bool _logoutFailed = false;
+  final _username = TextEditingController();
+  final _password = TextEditingController();
+  final _code = TextEditingController();
+
+  Future<void> _changePassword(bool ru) async {
+    String t(String en, String russian) => ru ? russian : en;
+    var previous = '';
+    var replacement = '';
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t('Change password', 'Сменить пароль')),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              onChanged: (value) => previous = value,
+              decoration: InputDecoration(
+                  labelText: t('Current password', 'Текущий пароль'))),
+          TextField(
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              onChanged: (value) => replacement = value,
+              decoration: InputDecoration(
+                  labelText: t('New password (14+ characters)',
+                      'Новый пароль (от 14 символов)'))),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(t('Cancel', 'Отмена'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(t('Save', 'Сохранить'))),
+        ],
+      ),
+    );
+    if (submitted != true || !mounted) return;
+    try {
+      await corporateSession.api('/v2/auth/password',
+          method: 'PUT',
+          body: {'current': previous, 'replacement': replacement});
+      await corporateSession.signOut();
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(t(
+                  'Could not change password.', 'Не удалось сменить пароль.'))),
+        );
+    }
+  }
+
+  @override
+  void dispose() {
+    _username.dispose();
+    _password.dispose();
+    _code.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,24 +92,49 @@ class _CorporateAccountState extends State<CorporateAccount> {
               if (!corporateSession.configured)
                 Text(t('Corporate sign-in is unconfigured.',
                     'Корпоративный вход не настроен.')),
+              if (_logoutFailed)
+                Text(t('Signed out locally. Server revocation was unavailable.',
+                    'Локальный выход выполнен. Серверный отзыв недоступен.')),
+              if (corporateSession.configured) ...[
+                TextField(
+                    controller: _username,
+                    decoration:
+                        InputDecoration(labelText: t('Login', 'Логин'))),
+                TextField(
+                    controller: _password,
+                    obscureText: true,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration:
+                        InputDecoration(labelText: t('Password', 'Пароль'))),
+                TextField(
+                    controller: _code,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    decoration:
+                        InputDecoration(labelText: t('MFA code', 'Код MFA'))),
+              ],
               OutlinedButton(
                 onPressed:
                     corporateSession.configured && !corporateSession.signingIn
                         ? () async {
                             setState(() => _failed = false);
                             try {
-                              await corporateSession.signIn();
+                              await corporateSession.signIn(
+                                  _username.text, _password.text, _code.text);
                             } catch (_) {
                               if (mounted) setState(() => _failed = true);
+                            } finally {
+                              if (mounted) {
+                                _password.clear();
+                                _code.clear();
+                              }
                             }
                           }
                         : null,
                 child: Text(t('Sign in with corporate account',
                     'Войти через корпоративную учётную запись')),
               ),
-              if (corporateSession.signingIn)
-                Text(t('Complete sign-in in your browser.',
-                    'Завершите вход в браузере.')),
               if (_failed)
                 Text(t('Corporate sign-in failed.',
                     'Не удалось войти в корпоративный аккаунт.')),
@@ -64,7 +152,17 @@ class _CorporateAccountState extends State<CorporateAccount> {
                 spacing: 8,
                 children: [
                   OutlinedButton(
-                    onPressed: corporateSession.signOut,
+                      onPressed: () => _changePassword(ru),
+                      child: Text(t('Change password', 'Сменить пароль'))),
+                  OutlinedButton(
+                    onPressed: () async {
+                      setState(() => _logoutFailed = false);
+                      try {
+                        await corporateSession.signOut();
+                      } catch (_) {
+                        if (mounted) setState(() => _logoutFailed = true);
+                      }
+                    },
                     child: Text(t('Sign out', 'Выйти')),
                   ),
                   if (corporateSession.canReadDirectory)
@@ -97,8 +195,6 @@ class _Directory extends StatefulWidget {
 class _DirectoryState extends State<_Directory> {
   final _search = TextEditingController();
   late Future<dynamic> _result;
-  bool _devices = false;
-  Map<String, dynamic>? _employee;
   String? _notice;
   bool _requestPending = false;
 
@@ -117,11 +213,9 @@ class _DirectoryState extends State<_Directory> {
   }
 
   Future<dynamic> _searchDirectory() =>
-      corporateSession.api(_devices ? '/v1/devices' : '/v1/employees',
-          query: {'q': _search.text.trim()});
+      corporateSession.api('/v2/devices', query: {'q': _search.text.trim()});
 
   void _reload() => setState(() {
-        _employee = null;
         _notice = null;
         _result = _searchDirectory();
       });
@@ -133,7 +227,7 @@ class _DirectoryState extends State<_Directory> {
       _notice = null;
     });
     try {
-      await corporateSession.api('/v1/devices/$id/connection', post: true);
+      await corporateSession.api('/v2/devices/$id/connection', method: 'POST');
       if (mounted) {
         setState(
             () => _notice = t('No session was started.', 'Сеанс не запущен.'));
@@ -158,7 +252,88 @@ class _DirectoryState extends State<_Directory> {
     }
   }
 
-  ListTile _device(Map<String, dynamic> row, {required bool latest}) {
+  Future<void> _save(
+      Map<String, dynamic> row, bool favorite, String group) async {
+    try {
+      await corporateSession.api('/v2/devices/${row['id']}/preferences',
+          method: 'PUT', body: {'favorite': favorite, 'group_name': group});
+      if (mounted) _reload();
+    } catch (_) {
+      if (mounted)
+        setState(() => _notice = t('Could not save device preferences.',
+            'Не удалось сохранить настройки устройства.'));
+    }
+  }
+
+  void _showHistory(Map<String, dynamic> row) {
+    final future = corporateSession.api('/v2/devices/${row['id']}/history');
+    var group = row['group_name'] as String;
+    showDialog<void>(
+      context: context,
+      builder: (context) => ListenableBuilder(
+        listenable: corporateSession,
+        builder: (context, _) => AlertDialog(
+          title: Text('${row['hostname']}'),
+          content: SizedBox(
+              width: 510,
+              height: 390,
+              child: !corporateSession.canReadDirectory
+                  ? Text(t('Directory access has expired.',
+                      'Доступ к каталогу истёк.'))
+                  : Column(children: [
+                      TextField(
+                          maxLength: 80,
+                          onChanged: (value) => group = value,
+                          decoration: InputDecoration(
+                              hintText: group,
+                              labelText:
+                                  t('Device group', 'Группа устройств'))),
+                      Expanded(
+                          child: FutureBuilder<dynamic>(
+                        future: future,
+                        builder: (context, snapshot) {
+                          if (snapshot.hasError)
+                            return Text(t(
+                                'History unavailable.', 'История недоступна.'));
+                          if (!snapshot.hasData)
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          final history = snapshot.data as List;
+                          if (history.isEmpty)
+                            return Text(t('No confirmed sessions.',
+                                'Подтверждённых сеансов нет.'));
+                          return ListView(children: [
+                            for (final event in history)
+                              ListTile(
+                                  title: Text(
+                                      '${event['username']} · ${event['transport']}'),
+                                  subtitle: Text(
+                                      '${event['observed_at']} · ${event['kind']}'),
+                                  trailing: event['current'] == true
+                                      ? const Icon(Icons.person)
+                                      : null),
+                          ]);
+                        },
+                      )),
+                    ])),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(t('Close', 'Закрыть'))),
+            if (corporateSession.canReadDirectory)
+              TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _save(row, row['favorite'] == true, group);
+                  },
+                  child: Text(t('Save group', 'Сохранить группу'))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  ListTile _device(Map<String, dynamic> row) {
     final heartbeat = DateTime.tryParse('${row['last_heartbeat']}')?.toLocal();
     final age = heartbeat == null ? null : DateTime.now().difference(heartbeat);
     final fresh =
@@ -166,24 +341,12 @@ class _DirectoryState extends State<_Directory> {
     final hardware = row['metadata'] as Map<String, dynamic>? ?? {};
     final detail = [
       '${row['dns_name']} · ID ${row['yesdesk_id']}',
-      t('Registered device', 'Зарегистрированное устройство'),
+      if ((row['group_name'] as String).isNotEmpty) row['group_name'] as String,
       fresh
           ? t('Recent agent heartbeat', 'Свежая связь с агентом')
           : t('Agent status unconfirmed', 'Состояние агента не подтверждено'),
       if (heartbeat != null) '${t('Heartbeat', 'Последняя связь')} $heartbeat',
-      if (row['is_primary'] == true)
-        t('Primary workplace', 'Основное рабочее место'),
-      if (latest)
-        t('Last confirmed workplace', 'Последнее подтверждённое рабочее место'),
-      if (row['active_confirmed'] == true)
-        t('Active session confirmed', 'Активный сеанс подтверждён'),
-      if (row['last_logon'] != null)
-        '${t('Last logon', 'Последний вход')} ${row['last_logon']}',
-      if (row['last_active'] != null)
-        '${t('Last active', 'Последняя активность')} ${row['last_active']}',
-      if (row['last_logoff'] != null)
-        '${t('Last logoff', 'Последний выход')} ${row['last_logoff']}',
-      for (final key in ['os', 'model', 'cpu'])
+      for (final key in ['domain', 'os', 'model', 'cpu'])
         if (hardware[key] != null && hardware[key] != '') '${hardware[key]}',
       if (hardware['ram_bytes'] case final int bytes)
         'RAM ${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GiB',
@@ -192,6 +355,13 @@ class _DirectoryState extends State<_Directory> {
           '${disk['name']} ${(disk['bytes'] / (1024 * 1024 * 1024)).toStringAsFixed(1)} GiB',
     ];
     return ListTile(
+      onTap: () => _showHistory(row),
+      leading: IconButton(
+        tooltip: t('Favorite', 'Избранное'),
+        onPressed: () =>
+            _save(row, row['favorite'] != true, row['group_name'] as String),
+        icon: Icon(row['favorite'] == true ? Icons.star : Icons.star_border),
+      ),
       title: Text('${row['hostname']}'),
       subtitle: Text(detail.join('\n')),
       trailing: row['can_request_consent'] == true && fresh
@@ -218,52 +388,17 @@ class _DirectoryState extends State<_Directory> {
                   'Directory access has expired.', 'Доступ к каталогу истёк.'))
               : Column(
                   children: [
-                    if (_employee == null) ...[
-                      Wrap(
-                        children: [
-                          TextButton(
-                            onPressed: () {
-                              _devices = false;
-                              _reload();
-                            },
-                            child: Text(t('Employees', 'Сотрудники')),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              _devices = true;
-                              _reload();
-                            },
-                            child: Text(t('Computers', 'Компьютеры')),
-                          ),
-                        ],
+                    TextField(
+                      controller: _search,
+                      maxLength: 100,
+                      onSubmitted: (_) => _reload(),
+                      decoration: InputDecoration(
+                        labelText: t('Computer, username or ID',
+                            'ПК, пользователь или ID'),
+                        suffixIcon: IconButton(
+                            onPressed: _reload, icon: const Icon(Icons.search)),
                       ),
-                      TextField(
-                        controller: _search,
-                        maxLength: 100,
-                        onSubmitted: (_) => _reload(),
-                        decoration: InputDecoration(
-                          labelText: t('Search', 'Поиск'),
-                          suffixIcon: IconButton(
-                            onPressed: _reload,
-                            icon: const Icon(Icons.search),
-                          ),
-                        ),
-                      ),
-                    ] else ...[
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton(
-                          onPressed: _reload,
-                          child: Text(
-                              t('Back to employees', 'К списку сотрудников')),
-                        ),
-                      ),
-                      ListTile(
-                        title: Text('${_employee!['display_name']}'),
-                        subtitle: Text('${_employee!['department']}\n'
-                            '${_employee!['username']} · ${_employee!['sid']}'),
-                      ),
-                    ],
+                    ),
                     if (_notice != null) Text(_notice!),
                     Expanded(
                       child: FutureBuilder<dynamic>(
@@ -278,35 +413,15 @@ class _DirectoryState extends State<_Directory> {
                             return Text(t('Directory unavailable.',
                                 'Каталог недоступен.'));
                           }
-                          final workplace = _employee != null;
-                          final rows = (workplace
-                              ? snapshot.data['devices']
-                              : snapshot.data) as List;
+
+                          final rows = snapshot.data as List;
                           if (rows.isEmpty) {
                             return Text(t('No results.', 'Нет результатов.'));
                           }
                           return ListView.builder(
                             itemCount: rows.length,
-                            itemBuilder: (context, index) {
-                              final row = rows[index] as Map<String, dynamic>;
-                              if (_devices || workplace) {
-                                return _device(row,
-                                    latest: workplace &&
-                                        row['id'] ==
-                                            snapshot.data['last_workplace_id']);
-                              }
-                              return ListTile(
-                                title: Text('${row['display_name']}'),
-                                subtitle: Text('${row['department']}'),
-                                onTap: () => setState(() {
-                                  _employee = row;
-                                  final sid =
-                                      Uri.encodeComponent(row['sid'] as String);
-                                  _result = corporateSession
-                                      .api('/v1/employees/$sid/workplaces');
-                                }),
-                              );
-                            },
+                            itemBuilder: (context, index) =>
+                                _device(rows[index] as Map<String, dynamic>),
                           );
                         },
                       ),

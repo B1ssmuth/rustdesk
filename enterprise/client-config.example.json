@@ -1,7 +1,3 @@
 {
-  "YESDESK_MANAGEMENT_URL": "https://management.lab.example",
-  "YESDESK_OIDC_AUTHORIZE": "https://idp.lab.example/realms/yesdesk/protocol/openid-connect/auth",
-  "YESDESK_OIDC_TOKEN": "https://idp.lab.example/realms/yesdesk/protocol/openid-connect/token",
-  "YESDESK_OIDC_CLIENT_ID": "yesdesk-desktop-public",
-  "YESDESK_OIDC_SCOPE": "openid yesdesk.management"
+  "YESDESK_MANAGEMENT_URL": "https://management.lab.example"
 }
