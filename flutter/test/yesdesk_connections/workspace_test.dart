@@ -74,6 +74,7 @@ void main() {
       (tester) async {
     final authenticated = ValueNotifier(false);
     final queries = <Map<String, String>?>[];
+    var discoveryRequested = false;
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData(extensions: [YesDeskColors.light]),
       home: Scaffold(
@@ -85,6 +86,7 @@ void main() {
           launcher: launcher,
           activity: (_) => ConnectionActivity.none,
           unified: true,
+          discover: () => discoveryRequested = true,
           allowProfessional: enabled,
           managementAvailable: enabled,
           managementApi: (path, {query, method = 'GET', body}) async {
@@ -109,11 +111,13 @@ void main() {
         ),
       )),
     ));
-    await pumpUntil(tester,
-        () => find.byType(LinearProgressIndicator).evaluate().isEmpty);
+    await pumpUntil(
+        tester, () => find.byType(LinearProgressIndicator).evaluate().isEmpty);
     await tester.pumpAndSettle();
     expect(queries, isEmpty);
     expect(find.text('Corporate devices'), findsNothing);
+    await tester.tap(find.byTooltip('Discover LAN devices'));
+    expect(discoveryRequested, isTrue);
     authenticated.value = true;
     await tester.pumpAndSettle();
     expect(queries, isNotEmpty);

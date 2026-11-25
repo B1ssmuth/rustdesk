@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 
@@ -67,6 +68,24 @@ class DesktopConnections {
       unified: unified,
       allowProfessional: allowProfessional,
       managementAvailable: managementAvailable,
+      discover: unified &&
+              option2bool(kOptionEnableLanDiscovery,
+                  bind.mainGetOptionSync(key: kOptionEnableLanDiscovery))
+          ? () => unawaited(bind.mainDiscover())
+          : null,
+      aliases: unified
+          ? (profile) sync* {
+              if (profile.type != ConnectionType.remoteDesktop) return;
+              final target =
+                  RemoteDesktopOptions.comparableTarget(profile.host);
+              for (final peer in gFFI.lanPeersModel.peers) {
+                if (RemoteDesktopOptions.comparableTarget(peer.id) == target) {
+                  yield peer.hostname;
+                  yield* peer.lanAddresses;
+                }
+              }
+            }
+          : null,
     );
   }
 

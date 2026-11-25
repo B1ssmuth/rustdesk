@@ -40,6 +40,7 @@ class ConnectionCatalog {
     required String? folderId,
     ConnectionType? type,
     String Function(ConnectionType)? typeLabel,
+    Iterable<String> Function(ConnectionProfile)? aliases,
   }) {
     final terms = query.trim().toLowerCase().split(RegExp(r'\s+'));
     final matches = profiles.values.where((profile) {
@@ -59,6 +60,7 @@ class ConnectionCatalog {
         profile.type.name,
         typeLabel?.call(profile.type) ?? '',
         ...profile.tags,
+        ...?aliases?.call(profile),
       ].join(' ').toLowerCase();
       return terms.every(target.contains);
     }).toList();

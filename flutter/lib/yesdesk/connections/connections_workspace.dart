@@ -34,6 +34,8 @@ class ConnectionsWorkspace extends StatefulWidget {
     this.allowProfessional = true,
     this.managementAvailable = false,
     this.managementApi,
+    this.discover,
+    this.aliases,
   });
 
   final String language;
@@ -47,6 +49,8 @@ class ConnectionsWorkspace extends StatefulWidget {
   final bool allowProfessional;
   final bool managementAvailable;
   final WorkspaceApi? managementApi;
+  final VoidCallback? discover;
+  final Iterable<String> Function(ConnectionProfile)? aliases;
 
   @override
   State<ConnectionsWorkspace> createState() => ConnectionsWorkspaceState();
@@ -508,6 +512,13 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
                   onPressed: enabled ? _export : null,
                   icon: const Icon(Icons.save_alt)),
             ],
+            if (!_managed && widget.discover != null)
+              IconButton(
+                onPressed: widget.discover,
+                icon: const Icon(Icons.radar),
+                tooltip: t('Discover LAN devices',
+                    'Найти устройства в локальной сети'),
+              ),
             IconButton(
                 tooltip: _tiles
                     ? t('Table view', 'Таблица')
@@ -583,6 +594,7 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
         sort: _sort,
         folderId: widget.unified && _query.trim().isNotEmpty ? null : _folder,
         type: widget.allowProfessional ? _type : ConnectionType.remoteDesktop,
+        aliases: widget.aliases,
         typeLabel: (type) => connectionTypeLabel(l, type));
     final visible = browse && widget.allowProfessional
         ? profiles.where((p) => p.folderId == _folder || p.pinned).toList()
