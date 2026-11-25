@@ -1,0 +1,7 @@
+<Project Sdk="WixToolset.Sdk/4.0.5">
+  <PropertyGroup>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>YESDesk-Agent-x64</OutputName>
+    <DefineConstants>AgentOutput=$(AgentOutput)</DefineConstants>
+  </PropertyGroup>
+</Project>

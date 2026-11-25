@@ -1,0 +1,21 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="YES Desk Windows Agent" Manufacturer="YES Apart" Version="1.0.0"
+           UpgradeCode="4250C5DB-5E09-44AB-816C-4082BB30DEB6" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer YES Desk Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="YES Desk Agent">
+        <Component Id="AgentService" Guid="A2C1A60F-E0AF-4C5C-B7D9-476723A9BCF6">
+          <File Id="AgentExe" Source="$(var.AgentOutput)\YesDeskAgent.exe" KeyPath="yes" />
+          <ServiceInstall Id="InstallAgent" Name="YESDeskAgent" DisplayName="YES Desk Inventory Agent"
+                          Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" />
+          <ServiceControl Id="ControlAgent" Name="YESDeskAgent" Start="install" Stop="both"
+                          Remove="uninstall" Wait="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Agent" Title="YES Desk Inventory Agent" Level="1">
+      <ComponentRef Id="AgentService" />
+    </Feature>
+  </Package>
+</Wix>
