@@ -1,7 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
+import json
 import os
 from pathlib import Path
 import tempfile
+from threading import Barrier
 import time
 from types import SimpleNamespace
 import unittest
@@ -9,12 +13,14 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 import jwt
 import psycopg
 
-from app import create_app, role_for
+from app import create_app, production_app, role_for
 from ad_sync import update as sync_directory
 from local_auth import hash_password, token_hash, totp_code
 from enrollment_broker import register
@@ -42,6 +48,7 @@ class ContractTests(unittest.TestCase):
         contract = app.openapi()["paths"]
         self.assertEqual(contract["/v1/me"]["get"]["security"], [{"HTTPBearer": []}])
         self.assertEqual(contract["/v1/agents/session"]["post"]["security"], [{"HTTPBearer": []}])
+        self.assertNotIn("/v2/devices/{device_id}/session-grants", contract)
 
 
 @unittest.skipUnless(os.environ.get("YESDESK_INTEGRATION") == "1",
@@ -85,6 +92,133 @@ class PostgresTests(unittest.TestCase):
         claims.update(changes)
         token = jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": "fixture"})
         return {"Authorization": f"Bearer {token}"}
+
+    def test_corporate_grant_lifecycle_through_production_routes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            signer = Ed25519PrivateKey.generate()
+            key_file = root / "grant.pem"
+            key_file.write_bytes(signer.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()))
+            mfa_file = root / "mfa"
+            mfa_file.write_bytes(Fernet.generate_key())
+            with patch.dict(os.environ, {
+                "YESDESK_CORPORATE_SIGNING_KEY_FILE": str(key_file), "YESDESK_WINDOWS_AGENTS": "1",
+                "YESDESK_LEGACY_OIDC": "0", "YESDESK_MFA_KEY_FILE": str(mfa_file),
+            }):
+                client = TestClient(production_app())
+
+            host = Ed25519PrivateKey.generate()
+            device = UUID(self.device)
+            session = "ls_" + "k" * 43
+            operator = "grant-test-admin"
+            certificate = "c" * 64
+            agent = "a" * 64
+            with psycopg.connect(database_url()) as db:
+                db.execute("DELETE FROM local_accounts WHERE username=%s", (operator,))
+                db.execute("INSERT INTO local_accounts (username,display_name,role,password_hash) "
+                           "VALUES (%s,'Grant Test','admin','unusable')", (operator,))
+                db.execute("INSERT INTO local_sessions VALUES (%s,%s,now()+interval '10 minutes')",
+                           (token_hash(session), operator))
+                db.execute("INSERT INTO local_device_grants VALUES (%s,%s)", (operator, device))
+                db.execute("UPDATE devices SET windows_enrollment=true,last_heartbeat=now() WHERE id=%s", (device,))
+                db.execute(
+                    "INSERT INTO device_enrollment_certificates(fingerprint,device_id,enrollment_until) "
+                    "VALUES (%s,%s,now()+interval '1 hour')", (certificate, device),
+                )
+                self.assertTrue(register(db, certificate, device, agent))
+                db.execute("INSERT INTO corporate_endpoint_keys VALUES (%s,%s,%s,now()+interval '1 hour')",
+                           (certificate, agent, host.public_key().public_bytes_raw()))
+
+            path = f"/v2/devices/{device}/session-grants"
+            auth = {"Authorization": "Bearer " + session}
+
+            def make_proof(purpose, bound_device, context, grant=""):
+                timestamp = int(time.time())
+                data = "\n".join((
+                    "YES Desk endpoint proof v1", purpose, str(bound_device), context["operator"], context["mode"],
+                    context["connection_id"], context["handshake"], str(timestamp), token_hash(grant) if grant else "",
+                )).encode("ascii")
+                return {**context, "timestamp": timestamp, "signature": host.sign(data).hex()}
+
+            def issue():
+                connection = uuid4()
+                context = {"operator": operator, "mode": "consent", "connection_id": str(connection),
+                           "handshake": connection.hex + uuid4().hex}
+                response = client.post(path, headers=auth, json=make_proof("issue", device, context))
+                self.assertEqual(response.status_code, 201, response.text)
+                return context, response.json()["grant"]
+
+            def redeem(context, grant, target=device, cli=client):
+                proof = make_proof("redeem", target, context, grant)
+                return cli.post(f"/v2/devices/{target}/session-grants/redeem", json={**proof, "grant": grant})
+
+            def unpack(grant):
+                segment = grant.split(".")[1]
+                return json.loads(urlsafe_b64decode(segment + "=" * (-len(segment) % 4)))
+
+            self.assertEqual(client.get("/health/ready").status_code, 200)
+            self.assertEqual(client.post(f"/v2/devices/{device}/connection", headers=auth).status_code, 501)
+            context, grant = issue()
+            with self.subTest("tampered grant signature"):
+                head, payload, signature = grant.split(".")
+                corrupted = urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
+                bad_sig = urlsafe_b64encode(bytes([corrupted[0] ^ 1]) + corrupted[1:]).rstrip(b"=").decode()
+                self.assertEqual(redeem(context, ".".join((head, payload, bad_sig))).status_code, 403)
+            for field, value in (
+                ("operator", "other-operator"), ("mode", "unattended"), ("connection_id", str(uuid4())),
+                ("handshake", "f" * 64),
+            ):
+                with self.subTest(field=field):
+                    self.assertEqual(redeem({**context, field: value}, grant).status_code, 403)
+            self.assertEqual(redeem(context, grant, uuid4()).status_code, 403)
+            wrong_proof = {**make_proof("redeem", device, context, grant), "signature": "0" * 128, "grant": grant}
+            self.assertEqual(client.post(path + "/redeem", json=wrong_proof).status_code, 403)
+            self.assertEqual(redeem(context, grant).status_code, 204)
+            self.assertEqual(redeem(context, grant).status_code, 403)
+            self.assertEqual(client.post(path, headers=auth, json=make_proof("issue", device, context)).status_code, 409)
+
+            context, grant = issue()
+            gate = Barrier(2, timeout=10)
+
+            def competitor():
+                with TestClient(client.app) as parallel_client:
+                    gate.wait()
+                    return redeem(context, grant, cli=parallel_client).status_code
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                jobs = [pool.submit(competitor) for _ in range(2)]
+                self.assertEqual(sorted(job.result(timeout=20) for job in jobs), [204, 403])
+
+            context, grant = issue()
+            self.assertEqual(client.delete(f"/v2/session-grants/{unpack(grant)['jti']}", headers=auth).status_code, 204)
+            self.assertEqual(redeem(context, grant).status_code, 403)
+
+            context, grant = issue()
+            with psycopg.connect(database_url()) as db:
+                db.execute("UPDATE corporate_session_grants SET expires_at=1 WHERE id=%s", (unpack(grant)["jti"],))
+            self.assertEqual(redeem(context, grant).status_code, 403)
+            past = {**unpack(grant), "iat": int(time.time()) - 60, "exp": int(time.time()) - 30}
+            expired_grant = jwt.encode(past, signer, algorithm="EdDSA", headers={"typ": "yesdesk-session-grant+jwt"})
+            self.assertEqual(redeem(context, expired_grant).status_code, 403)
+
+            context, grant = issue()
+            disabled_database = root / "offline-dsn"
+            disabled_database.write_text("host=127.0.0.1 port=1 dbname=yesdesk_enterprise_test connect_timeout=1")
+            with patch.dict(os.environ, {"YESDESK_DATABASE_URL_FILE": str(disabled_database)}):
+                self.assertEqual(redeem(context, grant).status_code, 503)
+            with psycopg.connect(database_url()) as db:
+                db.execute("DELETE FROM local_device_grants WHERE username=%s AND device_id=%s", (operator, device))
+            self.assertEqual(redeem(context, grant).status_code, 403)
+
+            with psycopg.connect(database_url()) as db:
+                db.execute("INSERT INTO local_device_grants VALUES (%s,%s)", (operator, device))
+            context, grant = issue()
+            with psycopg.connect(database_url()) as db:
+                db.execute("UPDATE devices SET enabled=false WHERE id=%s", (device,))
+            self.assertEqual(redeem(context, grant).status_code, 403)
+            with psycopg.connect(database_url()) as db:
+                count = db.execute("SELECT count(*) FROM audit WHERE action='session_grant_redeem' AND outcome='consumed'")
+                self.assertEqual(count.fetchone(), (2,))
 
     def test_rbac_rechecks_groups_and_rejects_wrong_token(self):
         self.assertEqual(self.client.get("/health/ready").status_code, 200)

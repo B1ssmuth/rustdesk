@@ -527,6 +527,7 @@ def cli():
         if not args.device_id:
             parser.error("--device-id is required")
         with psycopg.connect(database_url()) as db:
+            db.execute("SELECT pg_advisory_xact_lock(8143025)")
             if args.operation == "grant-device":
                 row = db.execute(
                     """INSERT INTO local_device_grants

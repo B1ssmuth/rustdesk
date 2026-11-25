@@ -220,7 +220,7 @@ pub struct Connection {
     inner: ConnInner,
     display_idx: usize,
     stream: super::Stream,
-    corporate_channel_binding: Option<super::hmacsha256::Tag>,
+    corporate_channel_binding: Option<super::corporate_grant::Transport>,
     server: super::ServerPtrWeak,
     hash: Hash,
     read_jobs: Vec<fs::TransferJob>,
@@ -359,13 +359,13 @@ const SEND_TIMEOUT_OTHER: u64 = SEND_TIMEOUT_VIDEO * 10;
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Connection {
-    pub async fn start(
+    pub(super) async fn start(
         addr: SocketAddr,
         stream: super::Stream,
         id: i32,
         server: super::ServerPtrWeak,
         control_permissions: Option<ControlPermissions>,
-        corporate_channel_binding: Option<super::hmacsha256::Tag>,
+        corporate_channel_binding: Option<super::corporate_grant::Transport>,
     ) {
         // Android is not supported yet, so we always set control_permissions to None.
         #[cfg(target_os = "android")]
@@ -4821,32 +4821,43 @@ enum LegacySwitch {
     ReverseLogin,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum CorporateDenial {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CorporateDenial {
     UnboundTransport,
     UnsupportedVersion,
     WrongChannel,
     EndpointVerificationUnavailable,
+    InvalidGrant,
+    GrantContextMismatch,
+    LocalPolicyDenied,
+    EndpointRedemptionUnavailable,
 }
 
 fn reject_corporate_access(
     msg: &Message,
-    channel_binding: Option<&super::hmacsha256::Tag>,
+    transport: Option<&super::corporate_grant::Transport>,
 ) -> Option<CorporateDenial> {
     let Some(message::Union::CorporateAccessRequest(request)) = &msg.union else {
         return None;
     };
-    let Some(binding) = channel_binding else {
+    let Some(transport) = transport else {
         return Some(CorporateDenial::UnboundTransport);
     };
     if request.protocol_version != 1 {
         return Some(CorporateDenial::UnsupportedVersion);
     }
-    if !hbb_common::sodiumoxide::utils::memcmp(binding.as_ref(), request.channel_binding.as_ref()) {
+    if !hbb_common::sodiumoxide::utils::memcmp(transport.binding.as_ref(), request.channel_binding.as_ref()) {
         return Some(CorporateDenial::WrongChannel);
     }
-    // A bound packet still requires verified operator and endpoint identities.
-    Some(CorporateDenial::EndpointVerificationUnavailable)
+    if request.grant.is_empty() {
+        return Some(CorporateDenial::EndpointVerificationUnavailable);
+    }
+    // Local signature and policy checks precede the still-disabled redemption
+    // transition. No corporate packet can enter ordinary password or IPC login.
+    Some(match super::corporate_grant::check_at_endpoint(&request.grant, transport) {
+        Ok(()) => CorporateDenial::EndpointRedemptionUnavailable,
+        Err(denial) => denial,
+    })
 }
 
 fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
@@ -4866,12 +4877,19 @@ mod switch_sides_tests {
     #[test]
     fn corporate_message_requires_a_bound_channel_and_cannot_authorize_login() {
         let key = super::super::secretbox::Key([1; 32]);
-        let first = super::super::corporate_channel_binding(&key, &super::super::box_::PublicKey([2; 32]));
-        let second = super::super::corporate_channel_binding(&key, &super::super::box_::PublicKey([3; 32]));
+        let transport = |ephemeral| super::super::corporate_grant::Transport {
+            binding: super::super::corporate_channel_binding(
+                &key,
+                &super::super::box_::PublicKey([ephemeral; 32]),
+            ),
+            endpoint_key: [4; 32],
+        };
+        let first = transport(2);
+        let second = transport(3);
         let mut message = Message::new();
         message.set_corporate_access_request(CorporateAccessRequest {
             protocol_version: 1,
-            channel_binding: first.as_ref().to_vec().into(),
+            channel_binding: first.binding.as_ref().to_vec().into(),
             ..Default::default()
         });
         let decoded = Message::parse_from_bytes(&message.write_to_bytes().unwrap()).unwrap();

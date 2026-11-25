@@ -17,6 +17,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, IPvAnyAddress,
 
 from settings import database_url, https_url
 from local_auth import install_routes, key
+from corporate_grants import configured_signer, install_grant_routes
 
 
 class Payload(BaseModel):
@@ -151,7 +152,7 @@ def role_for(groups, dns):
 
 
 def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_max_age=1800,
-               enrolled_agents=False):
+               enrolled_agents=False, corporate_signer=None):
     if issuer and (not all(groups.values()) or len(set(groups.values())) != 3):
         raise ValueError("Configure three distinct AD group DNs")
     if not 60 <= directory_max_age <= 3600:
@@ -162,6 +163,10 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
     Db = Annotated[psycopg.Connection, Depends(get_db)]
     Credential = Annotated[HTTPAuthorizationCredentials, Depends(bearer)]
     install_routes(app, get_db, bearer)
+    if corporate_signer is not None:
+        if not enrolled_agents:
+            raise ValueError("Corporate grants require Windows agent enrollment")
+        install_grant_routes(app, get_db, bearer, corporate_signer)
 
     @app.middleware("http")
     async def private_response(request: Request, call_next):
@@ -240,6 +245,10 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
             "SELECT 1 FROM schema_migrations WHERE name = '009_corporate_access_policy.sql'"
         ).fetchone():
             raise HTTPException(503, "Database migration required")
+        if corporate_signer is not None and not db.execute(
+            "SELECT 1 FROM schema_migrations WHERE name = '010_corporate_session_grants.sql'"
+        ).fetchone():
+            raise HTTPException(503, "Corporate grants database migration required")
         return {"status": "ok"}
 
     @app.get("/v1/me", response_model=Profile)
@@ -516,4 +525,5 @@ def production_app():
                       https_url("YESDESK_JWKS_URL") if legacy else None, groups,
                       test_agents=os.environ.get("YESDESK_ENV") == "test",
                       enrolled_agents=os.environ.get("YESDESK_WINDOWS_AGENTS") == "1",
+                      corporate_signer=configured_signer(),
                       directory_max_age=int(os.environ.get("YESDESK_DIRECTORY_MAX_AGE", "1800")))

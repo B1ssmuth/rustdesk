@@ -76,6 +76,7 @@ pub mod input_service {
 }
 
 mod connection;
+mod corporate_grant;
 pub mod display_service;
 #[cfg(windows)]
 pub mod portable_service;
@@ -207,6 +208,8 @@ pub async fn create_tcp_connection(
     let (sk, pk) = Config::get_key_pair();
     let mut channel_binding = None;
     if secure && pk.len() == sign::PUBLICKEYBYTES && sk.len() == sign::SECRETKEYBYTES {
+        let mut endpoint_key = [0; sign::PUBLICKEYBYTES];
+        endpoint_key.copy_from_slice(&pk);
         let mut sk_ = [0u8; sign::SECRETKEYBYTES];
         sk_[..].copy_from_slice(&sk);
         let sk = sign::SecretKey(sk_);
@@ -238,7 +241,10 @@ pub async fn create_tcp_connection(
                                 &pk.asymmetric_value,
                                 &our_sk_b,
                             )?;
-                            channel_binding = Some(corporate_channel_binding(&key, &our_pk_b));
+                            channel_binding = Some(corporate_grant::Transport {
+                                binding: corporate_channel_binding(&key, &our_pk_b),
+                                endpoint_key,
+                            });
                             stream.set_key(key);
                         } else if pk.asymmetric_value.is_empty() {
                             Config::set_key_confirmed(false);
