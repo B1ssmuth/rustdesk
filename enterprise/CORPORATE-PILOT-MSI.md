@@ -23,8 +23,10 @@ Existing migrations, client accounts, enrollment and optional AD synchronization
 
 ## Build and clean pilot installation
 
+Create a separate JSON client config whose `YESDESK_MANAGEMENT_URL` points to the approved pilot Management API over TLS. On both pilot VMs, configure the test RustDesk ID server, relay and public key before the first session. Use an isolated test network that cannot reach the client's default production server.
+
 ```powershell
-pwsh -File .\scripts\build-windows-local.ps1 -Build -Ref HEAD -UnifiedEnterpriseMsi -EnterpriseConfig .\enterprise\client-config.example.json
+pwsh -File .\scripts\build-windows-local.ps1 -Build -Ref HEAD -UnifiedEnterpriseMsi -EnterpriseConfig C:\Pilot\yesdesk-client.json
 ```
 
 The unified MSI installs the standard YES Desk client and transport service plus YESDeskAgent with one Windows Installer transaction. Its launch guard blocks initial installation over a detected previous product, transport service or standalone agent. Use only a clean pilot VM until a backup, migration and rollback sequence has been verified. Do not substitute an older ordinary MSI for an update to this package. The ordinary build without `-UnifiedEnterpriseMsi` stays available for non-enrolled clients.
