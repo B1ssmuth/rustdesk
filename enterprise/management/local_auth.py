@@ -3,6 +3,7 @@ from getpass import getpass
 import hashlib
 import hmac
 import json
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import secrets
@@ -17,7 +18,7 @@ from argon2.exceptions import VerificationError
 from cryptography.fernet import Fernet
 from fastapi import Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
 import psycopg
 
 from settings import database_url
@@ -63,6 +64,12 @@ class PasswordChange(BaseModel):
 class Preference(BaseModel):
     favorite: bool
     group_name: str = Field(max_length=80)
+
+
+class CorporatePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attended: bool
+    unattended_until: AwareDatetime | None = None
 
 
 def key():
@@ -329,6 +336,7 @@ def install_routes(app, get_db, bearer):
         ).fetchone()
         if not row:
             raise HTTPException(404, "Device unavailable")
+        db.execute("DELETE FROM corporate_access_policy WHERE device_id=%s", (device_id,))
         db.execute("UPDATE windows_sessions SET current=false WHERE device_id=%s AND current", (device_id,))
         write_audit(db, user["username"], "revoke_agent", device_id, "allowed")
         return {"id": device_id}
@@ -443,23 +451,61 @@ def install_routes(app, get_db, bearer):
             raise HTTPException(404, "Device unavailable")
         return row
 
+    def connection_policy(db, user, device_id):
+        return db.execute(
+            """SELECT COALESCE(p.attended, true) AS attended,
+                      COALESCE(d.windows_enrollment AND p.unattended_until>now()
+                               AND %(admin)s,false) AS unattended
+               FROM local_device_grants g JOIN devices d ON d.id=g.device_id
+               LEFT JOIN corporate_access_policy p ON p.device_id=d.id
+               WHERE g.username=%(username)s AND d.id=%(device)s AND d.enabled
+                 AND d.agent_hash IS NOT NULL AND d.last_heartbeat > now()-interval '2 minutes'""",
+            {"username": user["username"], "device": device_id, "admin": user["role"] == "admin"},
+        ).fetchone() or {"attended": False, "unattended": False}
+
+    @app.get("/v2/devices/{device_id}/connection-options")
+    def options(device_id: UUID, db: Db, user: Annotated[dict, Depends(directory)]):
+        policy = connection_policy(db, user, device_id)
+        return {
+            "attended": {"eligible": policy["attended"], "available": False},
+            "unattended": {"eligible": policy["unattended"], "available": False},
+            "reason": "endpoint_verification_unavailable",
+        }
+
+    @app.put("/v2/devices/{device_id}/corporate-policy")
+    def configure_policy(device_id: UUID, payload: CorporatePolicy, db: Db,
+                         user: Annotated[dict, Depends(mutation_admin)]):
+        until = payload.unattended_until
+        now = datetime.now(timezone.utc)
+        if until and not now < until <= now + timedelta(days=30):
+            raise HTTPException(422, "Unattended approval must expire within 30 days")
+        device = db.execute(
+            "SELECT 1 FROM devices WHERE id=%s AND enabled AND windows_enrollment FOR UPDATE",
+            (device_id,),
+        ).fetchone()
+        if not device:
+            write_audit(db, user["username"], "set_corporate_policy", device_id, "unmanaged_denied")
+            db.commit()
+            raise HTTPException(403, "Managed device required")
+        db.execute(
+            """INSERT INTO corporate_access_policy (device_id,attended,unattended_until) VALUES (%s,%s,%s)
+               ON CONFLICT(device_id) DO UPDATE SET attended=excluded.attended,
+                   unattended_until=excluded.unattended_until,updated_at=clock_timestamp()""",
+            (device_id, payload.attended, until),
+        )
+        write_audit(db, user["username"], "set_corporate_policy", device_id,
+                    f"attended:{payload.attended},unattended_until:{until.isoformat() if until else 'disabled'}")
+        return {"policy_stored": True, "endpoint_ready": False}
+
     @app.post("/v2/devices/{device_id}/connection", status_code=501)
     def connect(device_id: UUID, db: Db, user: Annotated[dict, Depends(directory)],
                 mode: Literal["consent", "unattended"] = "consent"):
-        if mode == "unattended":
-            write_audit(db, user["username"], "connection_unattended", device_id, "disabled")
-            db.commit()
-            raise HTTPException(403, "Unattended access is disabled")
-        grant = db.execute(
-            """SELECT 1 FROM local_device_grants g JOIN devices d ON d.id=g.device_id
-               WHERE g.username=%s AND d.id=%s AND d.enabled AND d.agent_hash IS NOT NULL
-                 AND d.last_heartbeat > now()-interval '2 minutes'""",
-            (user["username"], device_id),
-        ).fetchone()
-        write_audit(db, user["username"], "connection_consent", device_id,
-                    "endpoint_integration_required" if grant else "denied")
+        policy = connection_policy(db, user, device_id)
+        eligible = policy["attended"] if mode == "consent" else policy["unattended"]
+        write_audit(db, user["username"], f"connection_{mode}", device_id,
+                    "endpoint_integration_required" if eligible else "denied")
         db.commit()
-        if not grant:
+        if not eligible:
             raise HTTPException(403, "Device connection denied")
         raise HTTPException(501, "Endpoint enforcement is not configured")
 

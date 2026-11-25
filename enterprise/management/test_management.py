@@ -267,6 +267,22 @@ class PostgresTests(unittest.TestCase):
             db.execute("INSERT INTO local_device_grants VALUES ('catalog-admin',%s)", (machine,))
         self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 501)
         self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 403)
+        options = client.get(path + "/connection-options", headers=authorization).json()
+        self.assertEqual(options["attended"], {"eligible": True, "available": False})
+        self.assertEqual(options["unattended"], {"eligible": False, "available": False})
+        policy = client.put(path + "/corporate-policy", headers=authorization, json={
+            "attended": False, "unattended_until": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        })
+        self.assertEqual(policy.status_code, 200, policy.text)
+        options = client.get(path + "/connection-options", headers=authorization).json()
+        self.assertEqual(options["attended"], {"eligible": False, "available": False})
+        self.assertEqual(options["unattended"], {"eligible": True, "available": False})
+        self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 403)
+        self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 501)
+        with psycopg.connect(database_url()) as db:
+            db.execute("UPDATE corporate_access_policy SET unattended_until=now()-interval '1 minute' WHERE device_id=%s",
+                       (machine,))
+        self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 403)
         self.assertEqual(client.post("/v2/agents/inventory", headers=headers,
                                      json={**data, "sessions": None}).status_code, 200)
         with psycopg.connect(database_url()) as db:

@@ -2226,8 +2226,8 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
-        if is_corporate_access_request(&msg) {
-            self.send_login_error("yesdesk_corporate_access_unavailable").await;
+        if let Some(reason) = reject_corporate_access(&msg, self.stream.is_secured()) {
+            self.send_login_error(reason).await;
             return false;
         }
         match legacy_switch_message(&msg) {
@@ -4812,8 +4812,15 @@ enum LegacySwitch {
     ReverseLogin,
 }
 
-fn is_corporate_access_request(msg: &Message) -> bool {
-    matches!(&msg.union, Some(message::Union::CorporateAccessRequest(_)))
+fn reject_corporate_access(msg: &Message, secured: bool) -> Option<&'static str> {
+    match &msg.union {
+        Some(message::Union::CorporateAccessRequest(_)) if !secured => {
+            Some("yesdesk_corporate_transport_required")
+        }
+        // Stream encryption alone does not prove which operator or device owns a grant.
+        Some(message::Union::CorporateAccessRequest(_)) => Some("yesdesk_corporate_access_unavailable"),
+        _ => None,
+    }
 }
 
 fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
@@ -4835,9 +4842,17 @@ mod switch_sides_tests {
         let mut message = Message::new();
         message.set_corporate_access_request(CorporateAccessRequest::default());
         let decoded = Message::parse_from_bytes(&message.write_to_bytes().unwrap()).unwrap();
-        assert!(is_corporate_access_request(&decoded));
+        assert_eq!(
+            reject_corporate_access(&decoded, false),
+            Some("yesdesk_corporate_transport_required")
+        );
+        assert_eq!(
+            reject_corporate_access(&decoded, true),
+            Some("yesdesk_corporate_access_unavailable")
+        );
         message.set_login_request(LoginRequest::default());
-        assert!(!is_corporate_access_request(&message));
+        assert_eq!(reject_corporate_access(&message, false), None);
+        assert_eq!(reject_corporate_access(&message, true), None);
     }
 
     #[test]

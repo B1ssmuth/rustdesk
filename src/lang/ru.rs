@@ -463,6 +463,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("yesdesk_switch_sides_unavailable", "Переключение сторон недоступно: этот протокол не может гарантировать просмотр без управления или запросить разрешение владельца компьютера."),
         ("Switch Sides", "Переключить стороны"),
         ("yesdesk_corporate_access_unavailable", "Корпоративное подключение недоступно на этом компьютере."),
+        ("yesdesk_corporate_transport_required", "Корпоративный доступ требует проверенного зашифрованного соединения."),
         ("Please confirm if you want to share your desktop?", "Подтверждаете, что разрешаете демонстрацию рабочего стола?"),
         ("Display", "Отображение"),
         ("Default View Style", "Стиль отображения по умолчанию"),

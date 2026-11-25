@@ -36,6 +36,7 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   final _columns = {'user', 'status', 'id'};
   Map<String, dynamic>? _selected;
   Future<dynamic>? _history;
+  Future<dynamic>? _connectionOptions;
   late Future<dynamic> _data;
   String? _notice;
   bool _treeVisible = false;
@@ -95,6 +96,9 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
         _selected = row;
         final id = row['device_id'];
         _history = id == null ? null : request('/v2/devices/$id/history');
+        _connectionOptions = id == null || row['agent_registered'] != true
+            ? null
+            : request('/v2/devices/$id/connection-options');
         _notice = null;
       });
 
@@ -201,9 +205,7 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
                           labelText: t('Group (Enter to save)',
                               'Группа (Enter для сохранения)'))),
                 const Divider(),
-                Text(t(
-                    'Corporate connection is unavailable until the receiving device can verify permission.',
-                    'Корпоративное подключение недоступно до проверки разрешений на принимающем устройстве.')),
+                _connectionActions(),
               ]),
               FutureBuilder<dynamic>(
                   future: _history,
@@ -230,6 +232,39 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
           ],
         ));
   }
+
+  Widget _connectionActions() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FilledButton(
+              onPressed: null, child: Text(t('Connect', 'Подключиться'))),
+          Text(t(
+              'Corporate connection is unavailable until the receiving device verifies permission.',
+              'Корпоративное подключение недоступно до проверки разрешений на принимающем устройстве.')),
+          if (_connectionOptions != null)
+            FutureBuilder<dynamic>(
+              future: _connectionOptions,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Text(t('Access policy unavailable.',
+                      'Политика доступа недоступна.'));
+                }
+                final options = snapshot.data;
+                if (options is! Map) return const SizedBox.shrink();
+                return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (options['attended']?['eligible'] == true)
+                        Text(t('With confirmation · blocked on endpoint',
+                            'С подтверждением · заблокировано на получателе')),
+                      if (options['unattended']?['eligible'] == true)
+                        Text(t('Corporate access · blocked on endpoint',
+                            'Корпоративный доступ · заблокировано на получателе')),
+                    ]);
+              },
+            ),
+        ],
+      );
 
   Widget _tree(List paths) {
     final unique = <String, List<String>>{};
