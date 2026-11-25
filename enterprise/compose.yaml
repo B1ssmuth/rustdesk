@@ -30,7 +30,8 @@ services:
     env_file: ${YESDESK_CONFIG:-test.env}
     environment:
       YESDESK_DATABASE_URL_FILE: /run/secrets/database_url
-    secrets: [database_url]
+      YESDESK_MFA_KEY_FILE: /run/secrets/mfa_key
+    secrets: [database_url, mfa_key]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -56,3 +57,5 @@ secrets:
     file: ./secrets/database-url
   db_password:
     file: ./secrets/db-password
+  mfa_key:
+    file: ./secrets/mfa-key

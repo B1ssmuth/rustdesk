@@ -36,24 +36,26 @@ def apply_directory(db, snapshot):
     )
 
 
-def issue_test_code(db, device):
-    if os.environ.get("YESDESK_ENV") != "test":
+def issue_test_code(db, device, windows=False):
+    if not windows and os.environ.get("YESDESK_ENV") != "test":
         raise ValueError("Test enrollment is available only in the test environment")
     code = secrets.token_urlsafe(32)
     db.execute(
-        "INSERT INTO devices (id,computer_sid,hostname,dns_name,yesdesk_id,enrollment_hash,enrollment_until) "
-        "VALUES (%s,%s,%s,%s,%s,%s,now()+interval '10 minutes') "
+        "INSERT INTO devices (id,computer_sid,hostname,dns_name,yesdesk_id,enrollment_hash,enrollment_until,windows_enrollment) "
+        "VALUES (%s,%s,%s,%s,%s,%s,now()+interval '10 minutes',%s) "
         "ON CONFLICT (id) DO UPDATE SET enrollment_hash=excluded.enrollment_hash,"
         "enrollment_until=excluded.enrollment_until WHERE devices.enabled "
         "AND devices.computer_sid=excluded.computer_sid AND devices.hostname=excluded.hostname "
         "AND devices.dns_name=excluded.dns_name AND devices.yesdesk_id=excluded.yesdesk_id "
+        "AND devices.windows_enrollment=excluded.windows_enrollment "
         "RETURNING id",
         (UUID(device["id"]), device["computer_sid"], device["hostname"],
-         device["dns_name"], device["yesdesk_id"], digest(code)),
+         device["dns_name"], device["yesdesk_id"], digest(code), windows),
     ).fetchone() or _identity_conflict()
     db.execute(
         "INSERT INTO audit (actor,action,target,outcome) VALUES "
-        "(session_user,'issue_test_enrollment',%s,'allowed')", (device["id"],),
+        "(session_user,%s,%s,'allowed')",
+        ("issue_windows_enrollment" if windows else "issue_test_enrollment", device["id"]),
     )
     return code
 
@@ -64,7 +66,7 @@ def _identity_conflict():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=["import-directory", "enroll-test-device"])
+    parser.add_argument("operation", choices=["import-directory", "enroll-test-device", "enroll-windows-device"])
     parser.add_argument("input", type=Path)
     args = parser.parse_args()
     data = json.loads(args.input.read_text(encoding="utf-8"))
@@ -73,6 +75,6 @@ if __name__ == "__main__":
             apply_directory(db, data)
             code = None
         else:
-            code = issue_test_code(db, data)
+            code = issue_test_code(db, data, windows=args.operation == "enroll-windows-device")
     if code:
         print(code)

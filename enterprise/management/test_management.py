@@ -1,16 +1,21 @@
 from datetime import datetime, timedelta, timezone
 import os
+from pathlib import Path
+import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 import jwt
 import psycopg
 
 from app import create_app, role_for
+from local_auth import hash_password, totp_code
 from migrate import migrate
 from provision import apply_directory, issue_test_code
 from settings import database_url
@@ -140,6 +145,69 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("/v1/lab/devices/{device_id}/grants",
                          production.get("/openapi.json").json()["paths"])
+
+    def test_local_mfa_revocation_and_rate_limit(self):
+        client = TestClient(create_app(None, None, None, {}))
+        secret = b"isolated-test-totp-secret"
+        key = Fernet.generate_key()
+        cipher = Fernet(key)
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "key"
+            key_path.write_bytes(key)
+            with patch.dict(os.environ, {"YESDESK_MFA_KEY_FILE": str(key_path)}):
+                with psycopg.connect(database_url()) as db:
+                    db.execute("TRUNCATE local_accounts,local_login_limits CASCADE")
+                    db.execute("INSERT INTO local_accounts(username,display_name,role,password_hash,totp_secret) "
+                               "VALUES ('local-admin','Lab Admin','admin',%s,%s)",
+                               (hash_password("local test admin password"), cipher.encrypt(secret)))
+                base = {"username": "local-admin", "password": "local test admin password"}
+                self.assertEqual(client.post("/v2/auth/login", json=base).status_code, 401)
+                login = {**base, "code": totp_code(secret, int(time.time()) // 30)}
+                result = client.post("/v2/auth/login", json=login)
+                self.assertEqual(result.status_code, 200, result.text)
+                adm = {"Authorization": "Bearer " + result.json()["token"]}
+                self.assertEqual(client.post("/v2/auth/login", json=login).status_code, 401)
+                user = {"username": "local-user", "password": "local test user password"}
+                self.assertEqual(client.post("/v2/accounts", headers=adm,
+                                             json={**user, "display_name": "User", "role": "user"}).status_code, 201)
+                user_token = client.post("/v2/auth/login", json=user).json()["token"]
+                headers = {"Authorization": "Bearer " + user_token}
+                self.assertEqual(client.get("/v2/devices", headers=headers).status_code, 403)
+                self.assertEqual(client.put("/v2/accounts/local-user", headers=adm,
+                                            json={"enabled": False}).status_code, 200)
+                self.assertEqual(client.get("/v2/auth/me", headers=headers).status_code, 401)
+                self.assertEqual(client.post("/v2/auth/logout", headers=adm).status_code, 200)
+                self.assertEqual(client.get("/v2/auth/me", headers=adm).status_code, 401)
+                for _ in range(8):
+                    self.assertEqual(client.post("/v2/auth/login", json={"username": "missing",
+                                                 "password": "bad"}).status_code, 401)
+                self.assertEqual(client.post("/v2/auth/login", json={"username": "missing",
+                                             "password": "bad"}).status_code, 429)
+
+    def test_windows_enrollment_inventory_and_device_binding(self):
+        client = TestClient(create_app(None, None, None, {}, enrolled_agents=True))
+        machine = str(uuid4())
+        with psycopg.connect(database_url()) as db:
+            code = issue_test_code(db, dict(id=machine, computer_sid="S-1-5-21-12-13-14-701",
+                                            dns_name="windows.example.test", hostname="WINTEST",
+                                            yesdesk_id="123456700"), windows=True)
+        enrollment = dict(device_id=machine, enrollment_code=code)
+        token = client.post("/v2/agents/enroll", json=enrollment).json()["agent_token"]
+        self.assertEqual(client.post("/v2/agents/enroll", json=enrollment).status_code, 401)
+        headers = {"Authorization": "Bearer " + token}
+        data = dict(machine_guid=machine, hostname="WINTEST", domain="WORKGROUP",
+                    os="Windows", model="Lab", cpu="x64", ram_bytes=1024, disks=[],
+                    sessions=[dict(session_id=2, sid=USER, username="WINTEST\\user",
+                                   logon_at=datetime.now(timezone.utc).isoformat(),
+                                   transport="rdp", state="active")])
+        self.assertEqual(client.post("/v2/agents/inventory", headers=headers,
+                                     json={**data, "machine_guid": self.device}).status_code, 403)
+        self.assertEqual(client.post("/v2/agents/inventory", headers=headers, json=data).status_code, 200)
+        self.assertEqual(client.post("/v2/agents/inventory", headers=headers,
+                                     json={**data, "sessions": None}).status_code, 200)
+        with psycopg.connect(database_url()) as db:
+            self.assertEqual(db.execute("SELECT current FROM windows_sessions WHERE device_id=%s",
+                                        (machine,)).fetchone(), (False,))
 
     def test_lab_grants_are_bound_single_use_expiring_and_revocable(self):
         enrollment = self.client.post("/v1/agents/enroll", json={

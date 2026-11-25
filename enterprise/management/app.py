@@ -16,6 +16,7 @@ from psycopg.types.json import Jsonb
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool
 
 from settings import database_url, https_url
+from local_auth import install_routes, key
 
 
 class Payload(BaseModel):
@@ -38,6 +39,22 @@ class Hardware(Payload):
     cpu: str = Field(max_length=128)
     ram_bytes: int = Field(ge=0, le=2**63 - 1)
     disks: list[Disk] = Field(max_length=32)
+
+
+class WindowsSession(Payload):
+    session_id: int = Field(ge=1, le=2**31-1)
+    sid: str = Field(pattern=r"^S-1-[0-9]+(-[0-9]+){1,15}$", max_length=184)
+    username: str = Field(min_length=1, max_length=256)
+    logon_at: AwareDatetime
+    transport: Literal["console", "rdp", "unknown"]
+    state: Literal["active", "connected", "disconnected", "other"]
+
+
+class WindowsInventory(Hardware):
+    machine_guid: UUID
+    hostname: str = Field(min_length=1, max_length=255)
+    domain: str = Field(max_length=255)
+    sessions: list[WindowsSession] | None = Field(max_length=128)
 
 
 class SessionEvent(Payload):
@@ -131,16 +148,18 @@ def role_for(groups, dns):
     return None
 
 
-def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_max_age=1800):
-    if not all(groups.values()) or len(set(groups.values())) != 3:
+def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_max_age=1800,
+               enrolled_agents=False):
+    if issuer and (not all(groups.values()) or len(set(groups.values())) != 3):
         raise ValueError("Configure three distinct AD group DNs")
     if not 60 <= directory_max_age <= 3600:
         raise ValueError("Directory snapshot lifetime must be between 60 and 3600 seconds")
     app = FastAPI(title="YES Desk Management", version="3.0.0")
-    jwks = jwt.PyJWKClient(jwks_url, timeout=5, lifespan=120)
+    jwks = jwt.PyJWKClient(jwks_url, timeout=5, lifespan=120) if issuer else None
     bearer = HTTPBearer()
     Db = Annotated[psycopg.Connection, Depends(get_db)]
     Credential = Annotated[HTTPAuthorizationCredentials, Depends(bearer)]
+    install_routes(app, get_db, bearer)
 
     @app.middleware("http")
     async def private_response(request: Request, call_next):
@@ -153,6 +172,8 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
         return JSONResponse({"detail": "Invalid request"}, status_code=422)
 
     def employee(db: Db, credential: Credential):
+        if jwks is None:
+            raise HTTPException(401, "Legacy corporate identity is disabled")
         try:
             token = credential.credentials
             if len(token) > 8192:
@@ -214,7 +235,7 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
     @app.get("/health/ready")
     def ready(db: Db):
         if not db.execute(
-            "SELECT 1 FROM schema_migrations WHERE name = '003_corporate_grants.sql'"
+            "SELECT 1 FROM schema_migrations WHERE name = '005_agent_inventory.sql'"
         ).fetchone():
             raise HTTPException(503, "Database migration required")
         return {"status": "ok"}
@@ -296,13 +317,62 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
         token = secrets.token_urlsafe(32)
         row = db.execute(
             "UPDATE devices SET agent_hash=%s, enrollment_hash=NULL, enrollment_until=NULL "
-            "WHERE id=%s AND enabled AND enrollment_hash=%s AND enrollment_until > now() RETURNING id",
+            "WHERE id=%s AND enabled AND NOT windows_enrollment AND enrollment_hash=%s AND enrollment_until > now() RETURNING id",
             (digest(token), payload.device_id, digest(payload.enrollment_code)),
         ).fetchone()
         if row is None:
             raise HTTPException(401, "Invalid enrollment")
         audit(db, payload.device_id, "enroll_agent", payload.device_id, "allowed")
         return {"agent_token": token}
+
+    @app.post("/v2/agents/enroll", response_model=AgentCredential)
+    def enroll_windows(payload: Enrollment, db: Db):
+        token = secrets.token_urlsafe(32)
+        if not enrolled_agents or not payload.enrollment_code.isascii():
+            raise HTTPException(403, "Device enrollment unavailable")
+        row = db.execute(
+            """UPDATE devices SET agent_hash=%s,enrollment_hash=NULL,enrollment_until=NULL
+               WHERE id=%s AND enabled AND enrollment_hash=%s AND enrollment_until>now()
+                 AND windows_enrollment RETURNING id""",
+            (digest(token), payload.device_id, digest(payload.enrollment_code)),
+        ).fetchone()
+        if not row:
+            raise HTTPException(401, "Invalid enrollment")
+        audit(db, payload.device_id, "enroll_windows", payload.device_id, "allowed")
+        return {"agent_token": token}
+
+    @app.post("/v2/agents/inventory")
+    def inventory(payload: WindowsInventory, db: Db, cred: Credential):
+        token = cred.credentials
+        if not enrolled_agents or not token.isascii() or len(token) != 43:
+            raise HTTPException(401, "Invalid agent identity")
+        device = db.execute(
+            "SELECT id FROM devices WHERE agent_hash=%s AND enabled AND windows_enrollment FOR UPDATE",
+            (digest(token),),
+        ).fetchone()
+        if not device or device["id"] != payload.machine_guid:
+            raise HTTPException(403, "Device identity mismatch")
+        data = payload.model_dump(mode="json", exclude={"machine_guid", "sessions"})
+        db.execute(
+            "UPDATE devices SET last_heartbeat=clock_timestamp(),metadata=%s WHERE id=%s",
+            (Jsonb(data), device["id"]),
+        )
+        if payload.sessions is not None:
+            db.execute("UPDATE windows_sessions SET current=false WHERE device_id=%s", (device["id"],))
+            for session in payload.sessions:
+                db.execute(
+                    """INSERT INTO windows_sessions
+                       (device_id,session_id,user_sid,username,logon_at,transport,state,current)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,true)
+                       ON CONFLICT (device_id,session_id,user_sid,logon_at) DO UPDATE SET
+                           username=excluded.username, state=excluded.state,
+                           transport=excluded.transport,current=true,last_seen=clock_timestamp()""",
+                    (device["id"], session.session_id, session.sid, session.username,
+                     session.logon_at, session.transport, session.state),
+                )
+        else:
+            db.execute("UPDATE windows_sessions SET current=false WHERE device_id=%s AND current", (device["id"],))
+        return {"status": "ok"}
 
     @app.post("/v1/agents/heartbeat")
     def heartbeat(payload: Hardware, db: Db, device: Annotated[UUID, Depends(agent)]):
@@ -436,8 +506,12 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
 
 
 def production_app():
-    groups = {role: os.environ[f"YESDESK_{role.upper()}_DN"] for role in ("admin", "support", "user")}
-    return create_app(https_url("YESDESK_ISSUER"), os.environ["YESDESK_AUDIENCE"],
-                      https_url("YESDESK_JWKS_URL"), groups,
+    legacy = os.environ.get("YESDESK_LEGACY_OIDC") == "1"
+    groups = {role: os.environ[f"YESDESK_{role.upper()}_DN"]
+              for role in ("admin", "support", "user")} if legacy else {}
+    key()
+    return create_app(https_url("YESDESK_ISSUER") if legacy else None, os.environ.get("YESDESK_AUDIENCE"),
+                      https_url("YESDESK_JWKS_URL") if legacy else None, groups,
                       test_agents=os.environ.get("YESDESK_ENV") == "test",
+                      enrolled_agents=os.environ.get("YESDESK_WINDOWS_AGENTS") == "1",
                       directory_max_age=int(os.environ.get("YESDESK_DIRECTORY_MAX_AGE", "1800")))
