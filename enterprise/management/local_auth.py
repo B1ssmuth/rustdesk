@@ -14,7 +14,7 @@ from uuid import UUID
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from cryptography.fernet import Fernet
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 import psycopg
@@ -231,7 +231,8 @@ def install_routes(app, get_db, bearer):
         return row
 
     @app.get("/v2/devices")
-    def devices(db: Db, user: Annotated[dict, Depends(directory)], q: str = ""):
+    def devices(db: Db, user: Annotated[dict, Depends(directory)], q: str = "",
+                offset: Annotated[int, Query(ge=0)] = 0):
         if len(q) > 100:
             raise HTTPException(422, "Search term too long")
         return db.execute(
@@ -249,8 +250,8 @@ def install_routes(app, get_db, bearer):
                      WHERE w.device_id=d.id AND strpos(lower(w.username),lower(%(q)s))>0)
                    OR EXISTS (SELECT 1 FROM session_events s JOIN employees e ON e.sid=s.employee_sid
                      WHERE s.device_id=d.id AND strpos(lower(e.username), lower(%(q)s))>0))
-               ORDER BY favorite DESC,d.hostname,d.id LIMIT 100""",
-            {"username": user["username"], "q": q},
+               ORDER BY favorite DESC,d.hostname,d.id LIMIT 100 OFFSET %(offset)s""",
+            {"username": user["username"], "q": q, "offset": offset},
         ).fetchall()
 
     @app.get("/v2/devices/{device_id}/history")
@@ -288,7 +289,12 @@ def install_routes(app, get_db, bearer):
         return row
 
     @app.post("/v2/devices/{device_id}/connection", status_code=501)
-    def connect(device_id: UUID, db: Db, user: Annotated[dict, Depends(directory)]):
+    def connect(device_id: UUID, db: Db, user: Annotated[dict, Depends(directory)],
+                mode: Literal["consent", "unattended"] = "consent"):
+        if mode == "unattended":
+            write_audit(db, user["username"], "connection_unattended", device_id, "disabled")
+            db.commit()
+            raise HTTPException(403, "Unattended access is disabled")
         grant = db.execute(
             """SELECT 1 FROM local_device_grants g JOIN devices d ON d.id=g.device_id
                WHERE g.username=%s AND d.id=%s AND d.enabled AND d.agent_hash IS NOT NULL
@@ -308,13 +314,34 @@ def cli():
     import re
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=["bootstrap", "reset-mfa"])
+    parser.add_argument("operation", choices=["bootstrap", "reset-mfa", "grant-device", "revoke-device"])
     parser.add_argument("username")
+    parser.add_argument("--device-id", type=UUID)
     args = parser.parse_args()
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("An interactive private terminal is required")
     if not re.fullmatch(USERNAME, args.username):
         parser.error("Invalid username")
+    if args.operation in ("grant-device", "revoke-device"):
+        if not args.device_id:
+            parser.error("--device-id is required")
+        with psycopg.connect(database_url()) as db:
+            if args.operation == "grant-device":
+                row = db.execute(
+                    """INSERT INTO local_device_grants
+                       SELECT a.username,d.id FROM local_accounts a CROSS JOIN devices d
+                       WHERE a.username=%s AND a.enabled AND a.role IN ('admin','support')
+                         AND d.id=%s AND d.enabled
+                       ON CONFLICT (username,device_id) DO UPDATE SET device_id=excluded.device_id
+                       RETURNING device_id""", (args.username, args.device_id),
+                ).fetchone()
+                if not row:
+                    parser.error("Enabled operator and registered device required")
+            else:
+                db.execute("DELETE FROM local_device_grants WHERE username=%s AND device_id=%s",
+                           (args.username, args.device_id))
+            write_audit(db, "server-cli", args.operation, args.device_id, f"account:{args.username}")
+        return
     password = getpass("New password: ")
     if password != getpass("Repeat password: "):
         parser.error("Passwords differ")

@@ -358,7 +358,7 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
             (Jsonb(data), device["id"]),
         )
         if payload.sessions is not None:
-            db.execute("UPDATE windows_sessions SET current=false WHERE device_id=%s", (device["id"],))
+            db.execute("UPDATE windows_sessions SET current=false WHERE device_id=%s AND current", (device["id"],))
             for session in payload.sessions:
                 db.execute(
                     """INSERT INTO windows_sessions

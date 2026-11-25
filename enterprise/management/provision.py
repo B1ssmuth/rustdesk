@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import sys
 from uuid import UUID
 
 import psycopg
@@ -69,6 +70,8 @@ if __name__ == "__main__":
     parser.add_argument("operation", choices=["import-directory", "enroll-test-device", "enroll-windows-device"])
     parser.add_argument("input", type=Path)
     args = parser.parse_args()
+    if args.operation == "enroll-windows-device" and (not sys.stdin.isatty() or not sys.stdout.isatty()):
+        parser.error("Windows enrollment requires a private interactive terminal")
     data = json.loads(args.input.read_text(encoding="utf-8"))
     with psycopg.connect(database_url()) as db:
         if args.operation == "import-directory":

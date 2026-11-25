@@ -197,6 +197,7 @@ class _DirectoryState extends State<_Directory> {
   late Future<dynamic> _result;
   String? _notice;
   bool _requestPending = false;
+  int _offset = 0;
 
   String t(String en, String ru) => widget.ru ? ru : en;
 
@@ -212,10 +213,11 @@ class _DirectoryState extends State<_Directory> {
     super.dispose();
   }
 
-  Future<dynamic> _searchDirectory() =>
-      corporateSession.api('/v2/devices', query: {'q': _search.text.trim()});
+  Future<dynamic> _searchDirectory() => corporateSession.api('/v2/devices',
+      query: {'q': _search.text.trim(), 'offset': '$_offset'});
 
-  void _reload() => setState(() {
+  void _reload({int offset = 0}) => setState(() {
+        _offset = offset;
         _notice = null;
         _result = _searchDirectory();
       });
@@ -396,7 +398,8 @@ class _DirectoryState extends State<_Directory> {
                         labelText: t('Computer, username or ID',
                             'ПК, пользователь или ID'),
                         suffixIcon: IconButton(
-                            onPressed: _reload, icon: const Icon(Icons.search)),
+                            onPressed: () => _reload(),
+                            icon: const Icon(Icons.search)),
                       ),
                     ),
                     if (_notice != null) Text(_notice!),
@@ -415,14 +418,32 @@ class _DirectoryState extends State<_Directory> {
                           }
 
                           final rows = snapshot.data as List;
-                          if (rows.isEmpty) {
-                            return Text(t('No results.', 'Нет результатов.'));
-                          }
-                          return ListView.builder(
-                            itemCount: rows.length,
-                            itemBuilder: (context, index) =>
-                                _device(rows[index] as Map<String, dynamic>),
-                          );
+                          return Column(children: [
+                            Expanded(
+                                child: rows.isEmpty
+                                    ? Text(t('No results.', 'Нет результатов.'))
+                                    : ListView.builder(
+                                        itemCount: rows.length,
+                                        itemBuilder: (context, index) =>
+                                            _device(rows[index]
+                                                as Map<String, dynamic>),
+                                      )),
+                            if (_offset > 0 || rows.length == 100)
+                              Wrap(children: [
+                                TextButton(
+                                  onPressed: _offset == 0
+                                      ? null
+                                      : () => _reload(offset: _offset - 100),
+                                  child: Text(t('Previous', 'Назад')),
+                                ),
+                                TextButton(
+                                  onPressed: rows.length != 100
+                                      ? null
+                                      : () => _reload(offset: _offset + 100),
+                                  child: Text(t('Next', 'Далее')),
+                                ),
+                              ]),
+                          ]);
                         },
                       ),
                     ),
