@@ -15,7 +15,7 @@ import jwt
 import psycopg
 
 from app import create_app, role_for
-from local_auth import hash_password, totp_code
+from local_auth import hash_password, token_hash, totp_code
 from migrate import migrate
 from provision import apply_directory, issue_test_code
 from settings import database_url
@@ -203,6 +203,27 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(client.post("/v2/agents/inventory", headers=headers,
                                      json={**data, "machine_guid": self.device}).status_code, 403)
         self.assertEqual(client.post("/v2/agents/inventory", headers=headers, json=data).status_code, 200)
+        operator = "ls_" + "F" * 43
+        with psycopg.connect(database_url()) as db:
+            db.execute("INSERT INTO local_accounts(username,display_name,role,password_hash) "
+                       "VALUES ('catalog-admin','Catalog Admin','admin','fixture')")
+            db.execute("INSERT INTO local_sessions VALUES (%s,'catalog-admin',now()+interval '1 minute')",
+                       (token_hash(operator),))
+        authorization = {"Authorization": "Bearer " + operator}
+        directory = client.get("/v2/devices?q=WINTEST", headers=authorization)
+        self.assertEqual(directory.status_code, 200, directory.text)
+        self.assertEqual([row["id"] for row in directory.json()], [machine])
+        self.assertEqual(client.get("/v2/devices?offset=1", headers=authorization).json(), [])
+        path = f"/v2/devices/{machine}"
+        self.assertEqual(client.get(path + "/history", headers=authorization).json()[0]["current"], True)
+        self.assertEqual(client.put(path + "/preferences", headers=authorization,
+                                    json={"favorite": True, "group_name": "Lab"}).status_code, 200)
+        self.assertEqual(client.get("/v2/devices", headers=authorization).json()[0]["group_name"], "Lab")
+        self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 403)
+        with psycopg.connect(database_url()) as db:
+            db.execute("INSERT INTO local_device_grants VALUES ('catalog-admin',%s)", (machine,))
+        self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 501)
+        self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 403)
         self.assertEqual(client.post("/v2/agents/inventory", headers=headers,
                                      json={**data, "sessions": None}).status_code, 200)
         with psycopg.connect(database_url()) as db:
