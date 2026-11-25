@@ -956,6 +956,19 @@ message CorporateAccessRequest {
   string grant = 3;
 }
 
+message CorporateChallengeRequest {
+  uint32 protocol_version = 1;
+  bytes channel_binding = 2;
+  string operator = 3;
+  string mode = 4;
+}
+
+message CorporateChallenge {
+  string device_id = 1;
+  bytes endpoint_key = 2;
+  string issue_proof = 3;
+}
+
 message Message {
   oneof union {
     SignedId signed_id = 3;
@@ -989,5 +1002,7 @@ message Message {
     TerminalAction terminal_action = 31;
     TerminalResponse terminal_response = 32;
     CorporateAccessRequest corporate_access_request = 33;
+    CorporateChallengeRequest corporate_challenge_request = 34;
+    CorporateChallenge corporate_challenge = 35;
   }
 }

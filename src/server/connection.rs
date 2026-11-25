@@ -221,6 +221,8 @@ pub struct Connection {
     display_idx: usize,
     stream: super::Stream,
     corporate_channel_binding: Option<super::corporate_grant::Transport>,
+    corporate_attempt: Option<super::corporate_grant::Attempt>,
+    ordinary_login_seen: bool,
     server: super::ServerPtrWeak,
     hash: Hash,
     read_jobs: Vec<fs::TransferJob>,
@@ -412,6 +414,8 @@ impl Connection {
             display_idx: *display_service::PRIMARY_DISPLAY_IDX,
             stream,
             corporate_channel_binding,
+            corporate_attempt: None,
+            ordinary_login_seen: false,
             server,
             hash,
             read_jobs: Vec::new(),
@@ -572,6 +576,9 @@ impl Connection {
                 Some(data) = rx_from_cm.recv() => {
                     match data {
                         ipc::Data::Authorize => {
+                            if conn.corporate_attempt.is_some() {
+                                continue;
+                            }
                             conn.require_2fa.take();
                             if !conn.send_logon_response_and_keep_alive().await {
                                 break;
@@ -2229,7 +2236,7 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
-        if let Some(denial) = reject_corporate_access(&msg, self.corporate_channel_binding.as_ref()) {
+        if let Some(denial) = self.process_corporate(&msg).await {
             log::warn!("Corporate access rejected on connection {}: {:?}", self.inner.id(), denial);
             let error = if denial == CorporateDenial::UnboundTransport {
                 "yesdesk_corporate_transport_required"
@@ -2261,6 +2268,7 @@ impl Connection {
         }
         // After handling CloseReason messages, proceed to process other message types
         if let Some(message::Union::LoginRequest(lr)) = msg.union {
+            self.ordinary_login_seen = true;
             self.handle_login_request_without_validation(&lr).await;
             if self.authorized {
                 return true;
@@ -3309,6 +3317,54 @@ impl Connection {
             }
         }
         true
+    }
+
+    async fn process_corporate(&mut self, msg: &Message) -> Option<CorporateDenial> {
+        use super::corporate_grant;
+        use CorporateDenial::*;
+        match &msg.union {
+            Some(message::Union::CorporateChallengeRequest(request)) => {
+                if self.authorized || self.ordinary_login_seen || self.corporate_attempt.is_some() {
+                    return Some(GrantContextMismatch);
+                }
+                let transport = match verify_corporate_channel(
+                    request.protocol_version, request.channel_binding.as_ref(),
+                    self.corporate_channel_binding.as_ref(),
+                ) {
+                    Ok(transport) => transport,
+                    Err(denial) => return Some(denial),
+                };
+                match corporate_grant::challenge(request, transport) {
+                    Ok((attempt, challenge)) => {
+                        self.corporate_attempt = Some(attempt);
+                        let mut reply = Message::new();
+                        reply.set_corporate_challenge(challenge);
+                        self.send(reply).await;
+                        None
+                    }
+                    Err(denial) => Some(denial),
+                }
+            }
+            Some(message::Union::CorporateAccessRequest(request)) => {
+                let transport = match verify_corporate_channel(
+                    request.protocol_version, request.channel_binding.as_ref(),
+                    self.corporate_channel_binding.as_ref(),
+                ) {
+                    Ok(transport) => transport,
+                    Err(denial) => return Some(denial),
+                };
+                let Some(attempt) = self.corporate_attempt.take() else {
+                    return Some(GrantContextMismatch);
+                };
+                Some(match corporate_grant::redeem(&request.grant, transport, attempt).await {
+                    Ok(()) => EndpointAdmissionUnavailable,
+                    Err(denial) => denial,
+                })
+            }
+            Some(message::Union::CorporateChallenge(_)) => Some(GrantContextMismatch),
+            _ if self.corporate_attempt.is_some() => Some(GrantContextMismatch),
+            _ => None,
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -4830,34 +4886,25 @@ pub(super) enum CorporateDenial {
     InvalidGrant,
     GrantContextMismatch,
     LocalPolicyDenied,
+    LocalConsentUnavailable,
+    EndpointRedemptionDenied,
     EndpointRedemptionUnavailable,
+    EndpointAdmissionUnavailable,
 }
 
-fn reject_corporate_access(
-    msg: &Message,
-    transport: Option<&super::corporate_grant::Transport>,
-) -> Option<CorporateDenial> {
-    let Some(message::Union::CorporateAccessRequest(request)) = &msg.union else {
-        return None;
-    };
-    let Some(transport) = transport else {
-        return Some(CorporateDenial::UnboundTransport);
-    };
-    if request.protocol_version != 1 {
-        return Some(CorporateDenial::UnsupportedVersion);
+fn verify_corporate_channel<'a>(
+    version: u32,
+    binding: &[u8],
+    transport: Option<&'a super::corporate_grant::Transport>,
+) -> Result<&'a super::corporate_grant::Transport, CorporateDenial> {
+    let transport = transport.ok_or(CorporateDenial::UnboundTransport)?;
+    if version != 1 {
+        return Err(CorporateDenial::UnsupportedVersion);
     }
-    if !hbb_common::sodiumoxide::utils::memcmp(transport.binding.as_ref(), request.channel_binding.as_ref()) {
-        return Some(CorporateDenial::WrongChannel);
+    if !hbb_common::sodiumoxide::utils::memcmp(transport.binding.as_ref(), binding) {
+        return Err(CorporateDenial::WrongChannel);
     }
-    if request.grant.is_empty() {
-        return Some(CorporateDenial::EndpointVerificationUnavailable);
-    }
-    // Local signature and policy checks precede the still-disabled redemption
-    // transition. No corporate packet can enter ordinary password or IPC login.
-    Some(match super::corporate_grant::check_at_endpoint(&request.grant, transport) {
-        Ok(()) => CorporateDenial::EndpointRedemptionUnavailable,
-        Err(denial) => denial,
-    })
+    Ok(transport)
 }
 
 fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
@@ -4875,7 +4922,7 @@ mod switch_sides_tests {
     use super::*;
 
     #[test]
-    fn corporate_message_requires_a_bound_channel_and_cannot_authorize_login() {
+    fn corporate_wire_request_requires_the_current_supported_channel() {
         let key = super::super::secretbox::Key([1; 32]);
         let transport = |ephemeral| super::super::corporate_grant::Transport {
             binding: super::super::corporate_channel_binding(
@@ -4893,26 +4940,13 @@ mod switch_sides_tests {
             ..Default::default()
         });
         let decoded = Message::parse_from_bytes(&message.write_to_bytes().unwrap()).unwrap();
-        assert_eq!(
-            reject_corporate_access(&decoded, None),
-            Some(CorporateDenial::UnboundTransport)
-        );
-        assert_eq!(
-            reject_corporate_access(&decoded, Some(&second)),
-            Some(CorporateDenial::WrongChannel)
-        );
-        assert_eq!(
-            reject_corporate_access(&decoded, Some(&first)),
-            Some(CorporateDenial::EndpointVerificationUnavailable)
-        );
-        message.mut_corporate_access_request().protocol_version = 0;
-        assert_eq!(
-            reject_corporate_access(&message, Some(&first)),
-            Some(CorporateDenial::UnsupportedVersion)
-        );
-        message.set_login_request(LoginRequest::default());
-        assert_eq!(reject_corporate_access(&message, None), None);
-        assert_eq!(reject_corporate_access(&message, Some(&first)), None);
+        let request = decoded.corporate_access_request();
+        let version = request.protocol_version;
+        let binding = request.channel_binding.as_ref();
+        assert_eq!(verify_corporate_channel(version, binding, None).err(), Some(CorporateDenial::UnboundTransport));
+        assert_eq!(verify_corporate_channel(version, binding, Some(&second)).err(), Some(CorporateDenial::WrongChannel));
+        assert!(verify_corporate_channel(version, binding, Some(&first)).is_ok());
+        assert_eq!(verify_corporate_channel(0, binding, Some(&first)).err(), Some(CorporateDenial::UnsupportedVersion));
     }
 
     #[test]

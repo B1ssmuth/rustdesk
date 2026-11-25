@@ -1155,6 +1155,81 @@ pub fn is_locked() -> bool {
     unsafe { is_session_locked(session_id) == TRUE }
 }
 
+#[derive(PartialEq, Eq)]
+pub(crate) struct CorporateConsoleConsent {
+    session: u32,
+    logon: (i32, u32),
+}
+
+impl CorporateConsoleConsent {
+    fn current() -> Option<Self> {
+        use winapi::um::winnt::{TokenStatistics, TOKEN_STATISTICS};
+
+        #[link(name = "wtsapi32")]
+        extern "system" {
+            fn WTSQueryUserToken(session_id: DWORD, token: *mut HANDLE) -> BOOL;
+        }
+
+        let session = get_current_process_session_id()?;
+        if session == 0
+            || is_physical_console_session() != Some(true)
+            || is_locked()
+            || is_logon_ui().ok()? {
+            return None;
+        }
+        let mut token = null_mut();
+        if unsafe { WTSQueryUserToken(session, &mut token) } != TRUE || token.is_null() {
+            return None;
+        }
+        let mut stats: TOKEN_STATISTICS = unsafe { mem::zeroed() };
+        let mut length = 0;
+        let ok = unsafe {
+            let result = GetTokenInformation(
+                token, TokenStatistics, (&mut stats as *mut TOKEN_STATISTICS).cast(),
+                mem::size_of::<TOKEN_STATISTICS>() as u32, &mut length,
+            );
+            CloseHandle(token);
+            result
+        };
+        if ok != TRUE {
+            return None;
+        }
+        Some(Self { session, logon: (stats.AuthenticationId.HighPart, stats.AuthenticationId.LowPart) })
+    }
+
+    pub(crate) fn still_current(&self) -> bool {
+        Self::current().as_ref() == Some(self)
+    }
+}
+
+pub(crate) fn request_corporate_console_consent(operator: &str, timeout: u32) -> Option<CorporateConsoleConsent> {
+    #[link(name = "wtsapi32")]
+    extern "system" {
+        fn WTSSendMessageW(
+            server: HANDLE, session: DWORD, title: *mut u16, title_size: DWORD,
+            message: *mut u16, message_size: DWORD, style: DWORD, timeout: DWORD,
+            response: *mut DWORD, wait: BOOL,
+        ) -> BOOL;
+    }
+    let session = CorporateConsoleConsent::current()?;
+    let mut title: Vec<u16> = "YES Desk corporate access".encode_utf16().chain(Some(0)).collect();
+    let mut message: Vec<u16> = format!("Verified YES Desk operator: {operator}\nAllow this connection?")
+        .encode_utf16().chain(Some(0)).collect();
+    let mut response = 0;
+    let ok = unsafe {
+        WTSSendMessageW(
+            null_mut(), session.session, title.as_mut_ptr(), (2 * (title.len() - 1)) as u32,
+            message.as_mut_ptr(), (2 * (message.len() - 1)) as u32,
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2, timeout, &mut response, TRUE,
+        )
+    };
+    if ok == TRUE && response == IDYES as u32 && session.still_current() {
+        Some(session)
+    } else {
+        None
+    }
+}
+
 #[inline]
 pub fn is_logon_ui() -> ResultType<bool> {
     let Some(current_sid) = get_current_process_session_id() else {
