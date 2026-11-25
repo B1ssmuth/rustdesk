@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'admin_users.dart';
 import 'corporate_session.dart';
 
 class CorporateAccount extends StatefulWidget {
@@ -10,7 +11,7 @@ class CorporateAccount extends StatefulWidget {
 }
 
 class _CorporateAccountState extends State<CorporateAccount> {
-  bool _failed = false;
+  String? _loginError;
   bool _logoutFailed = false;
   final _username = TextEditingController();
   final _password = TextEditingController();
@@ -118,12 +119,24 @@ class _CorporateAccountState extends State<CorporateAccount> {
                 onPressed:
                     corporateSession.configured && !corporateSession.signingIn
                         ? () async {
-                            setState(() => _failed = false);
+                            setState(() => _loginError = null);
                             try {
                               await corporateSession.signIn(
                                   _username.text, _password.text, _code.text);
-                            } catch (_) {
-                              if (mounted) setState(() => _failed = true);
+                            } catch (error) {
+                              if (mounted)
+                                setState(() => _loginError = switch (error) {
+                                      CorporateApiError(statusCode: 401) => t(
+                                          'Invalid login, password or TOTP.',
+                                          'Неверный логин, пароль или TOTP.'),
+                                      CorporateApiError(statusCode: 403) =>
+                                        t('Access denied.', 'Доступ запрещён.'),
+                                      CorporateApiError(statusCode: 429) => t(
+                                          'Too many attempts. Try again later.',
+                                          'Слишком много попыток. Повторите позже.'),
+                                      _ => t('Corporate sign-in failed.',
+                                          'Не удалось войти в корпоративный аккаунт.'),
+                                    });
                             } finally {
                               if (mounted) {
                                 _password.clear();
@@ -135,9 +148,7 @@ class _CorporateAccountState extends State<CorporateAccount> {
                 child: Text(t('Sign in with corporate account',
                     'Войти через корпоративную учётную запись')),
               ),
-              if (_failed)
-                Text(t('Corporate sign-in failed.',
-                    'Не удалось войти в корпоративный аккаунт.')),
+              if (_loginError != null) Text(_loginError!),
             ] else ...[
               Text('${profile['display_name']} • ${profile['username']}'),
               Text('${profile['organization']}'),
@@ -151,6 +162,13 @@ class _CorporateAccountState extends State<CorporateAccount> {
               Wrap(
                 spacing: 8,
                 children: [
+                  if (corporateSession.isAdmin)
+                    OutlinedButton(
+                      onPressed: () => showDialog<void>(
+                          context: context, builder: (_) => AdminUsers(ru: ru)),
+                      child: Text(t('Administration → Users',
+                          'Администрирование → Пользователи')),
+                    ),
                   OutlinedButton(
                       onPressed: () => _changePassword(ru),
                       child: Text(t('Change password', 'Сменить пароль'))),
@@ -283,6 +301,8 @@ class _DirectoryState extends State<_Directory> {
                   ? Text(t('Directory access has expired.',
                       'Доступ к каталогу истёк.'))
                   : Column(children: [
+                      Text(
+                          '${row['dns_name']} · ${row['yesdesk_id']} · ${_status(row)}'),
                       TextField(
                           maxLength: 80,
                           onChanged: (value) => group = value,
@@ -322,7 +342,18 @@ class _DirectoryState extends State<_Directory> {
             TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: Text(t('Close', 'Закрыть'))),
-            if (corporateSession.canReadDirectory)
+            if (row['can_request_consent'] == true)
+              TextButton(
+                  onPressed: _requestPending
+                      ? null
+                      : () {
+                          Navigator.pop(context);
+                          _connect(row['id'] as String);
+                        },
+                  child: Text(
+                      t('Check access policy', 'Проверить политику доступа'))),
+            if (corporateSession.canReadDirectory &&
+                row['agent_registered'] == true)
               TextButton(
                   onPressed: () {
                     Navigator.pop(context);
@@ -335,44 +366,70 @@ class _DirectoryState extends State<_Directory> {
     );
   }
 
-  ListTile _device(Map<String, dynamic> row) {
-    final heartbeat = DateTime.tryParse('${row['last_heartbeat']}')?.toLocal();
+  String _field(Object? value) => value?.toString() ?? '—';
+
+  String _status(Map<String, dynamic> row) {
+    if (row['agent_registered'] != true)
+      return t('Agent missing', 'Агент отсутствует');
+    final heartbeat = DateTime.tryParse(_field(row['last_heartbeat']));
     final age = heartbeat == null ? null : DateTime.now().difference(heartbeat);
-    final fresh =
-        age != null && !age.isNegative && age < const Duration(minutes: 2);
-    final hardware = row['metadata'] as Map<String, dynamic>? ?? {};
-    final detail = [
-      '${row['dns_name']} · ID ${row['yesdesk_id']}',
-      if ((row['group_name'] as String).isNotEmpty) row['group_name'] as String,
-      fresh
-          ? t('Recent agent heartbeat', 'Свежая связь с агентом')
-          : t('Agent status unconfirmed', 'Состояние агента не подтверждено'),
-      if (heartbeat != null) '${t('Heartbeat', 'Последняя связь')} $heartbeat',
-      for (final key in ['domain', 'os', 'model', 'cpu'])
-        if (hardware[key] != null && hardware[key] != '') '${hardware[key]}',
-      if (hardware['ram_bytes'] case final int bytes)
-        'RAM ${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GiB',
-      if (hardware['disks'] case final List disks)
-        for (final disk in disks)
-          '${disk['name']} ${(disk['bytes'] / (1024 * 1024 * 1024)).toStringAsFixed(1)} GiB',
-    ];
-    return ListTile(
-      onTap: () => _showHistory(row),
-      leading: IconButton(
-        tooltip: t('Favorite', 'Избранное'),
-        onPressed: () =>
-            _save(row, row['favorite'] != true, row['group_name'] as String),
-        icon: Icon(row['favorite'] == true ? Icons.star : Icons.star_border),
-      ),
-      title: Text('${row['hostname']}'),
-      subtitle: Text(detail.join('\n')),
-      trailing: row['can_request_consent'] == true && fresh
-          ? TextButton(
-              onPressed:
-                  _requestPending ? null : () => _connect(row['id'] as String),
-              child: Text(t('Request connection', 'Запросить подключение')),
-            )
-          : null,
+    return age != null && !age.isNegative && age < const Duration(minutes: 2)
+        ? t('Online', 'В сети')
+        : t('Offline', 'Не в сети');
+  }
+
+  Widget _table(List rows) => SingleChildScrollView(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            showCheckboxColumn: false,
+            columnSpacing: 20,
+            columns: [
+              const DataColumn(label: Icon(Icons.star_outline)),
+              DataColumn(label: Text(t('Computer', 'Компьютер'))),
+              DataColumn(label: Text(t('Agent status', 'Статус агента'))),
+              DataColumn(
+                  label: Text(t('Windows user', 'Пользователь Windows'))),
+              const DataColumn(label: Text('YES Desk ID')),
+              DataColumn(label: Text(t('OS', 'ОС'))),
+              const DataColumn(label: Text('CPU')),
+              const DataColumn(label: Text('RAM')),
+              DataColumn(
+                  label: Text(t('Last heartbeat', 'Последний heartbeat'))),
+              DataColumn(label: Text(t('Group', 'Группа'))),
+            ],
+            rows: [
+              for (final Map<String, dynamic> row in rows) _device(row),
+            ],
+          ),
+        ),
+      );
+
+  DataRow _device(Map<String, dynamic> row) {
+    final hardware = row['metadata'] as Map<String, dynamic>;
+    final favorite = row['favorite'] == true;
+    final ram = hardware['ram_bytes'] as int?;
+    final time = DateTime.tryParse(_field(row['last_heartbeat']))?.toLocal();
+    return DataRow(
+      onSelectChanged: (_) => _showHistory(row),
+      cells: [
+        DataCell(IconButton(
+            tooltip: t('Favorite', 'Избранное'),
+            icon: Icon(favorite ? Icons.star : Icons.star_border),
+            onPressed: row['agent_registered'] == true
+                ? () => _save(row, !favorite, row['group_name'] as String)
+                : null)),
+        DataCell(Text(_field(row['hostname']))),
+        DataCell(Text(_status(row))),
+        DataCell(Text(_field(row['windows_user']))),
+        DataCell(Text(_field(row['yesdesk_id']))),
+        DataCell(Text(_field(hardware['os']))),
+        DataCell(Text(_field(hardware['cpu']))),
+        DataCell(Text(
+            ram == null ? '—' : '${(ram / (1 << 30)).toStringAsFixed(1)} GiB')),
+        DataCell(Text(_field(time))),
+        DataCell(Text(_field(row['group_name']))),
+      ],
     );
   }
 
@@ -402,6 +459,8 @@ class _DirectoryState extends State<_Directory> {
                             icon: const Icon(Icons.search)),
                       ),
                     ),
+                    Text(t('Corporate connection unavailable.',
+                        'Корпоративное подключение недоступно.')),
                     if (_notice != null) Text(_notice!),
                     Expanded(
                       child: FutureBuilder<dynamic>(
@@ -411,6 +470,11 @@ class _DirectoryState extends State<_Directory> {
                               ConnectionState.done) {
                             return const Center(
                                 child: CircularProgressIndicator());
+                          }
+                          if (snapshot.error
+                              case CorporateApiError(statusCode: 401 || 403)) {
+                            return Text(t('Access denied or session expired.',
+                                'Доступ запрещён или сеанс истёк.'));
                           }
                           if (snapshot.hasError) {
                             return Text(t('Directory unavailable.',
@@ -422,12 +486,7 @@ class _DirectoryState extends State<_Directory> {
                             Expanded(
                                 child: rows.isEmpty
                                     ? Text(t('No results.', 'Нет результатов.'))
-                                    : ListView.builder(
-                                        itemCount: rows.length,
-                                        itemBuilder: (context, index) =>
-                                            _device(rows[index]
-                                                as Map<String, dynamic>),
-                                      )),
+                                    : _table(rows)),
                             if (_offset > 0 || rows.length == 100)
                               Wrap(children: [
                                 TextButton(
