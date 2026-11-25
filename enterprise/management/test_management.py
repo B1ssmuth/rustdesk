@@ -15,6 +15,7 @@ import jwt
 import psycopg
 
 from app import create_app, role_for
+from ad_sync import update as sync_directory
 from local_auth import hash_password, token_hash, totp_code
 from enrollment_broker import register
 from migrate import migrate
@@ -341,6 +342,7 @@ class PostgresTests(unittest.TestCase):
         with psycopg.connect(database_url()) as db:
             db.execute("TRUNCATE ad_workstations")
             db.execute("TRUNCATE ad_sync_status")
+            db.execute("TRUNCATE ad_organizational_units")
             db.execute("INSERT INTO local_accounts(username,display_name,role,password_hash) "
                        "VALUES ('workspace-test','Workspace','admin','fixture')")
             db.execute("INSERT INTO local_sessions VALUES (%s,'workspace-test',now()+interval '1 minute')",
@@ -350,12 +352,15 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIsNone(response.json()["sync"])
         self.assertEqual([row["device_id"] for row in response.json()["rows"]], [self.device])
+        snapshot = [
+            (matched, "workstation.example.test", "MATCH", ["Workstations", "North"]),
+            (ad_only, "directory-only.example.test", "DIRECTORY", ["Workstations", "South"]),
+        ]
+        with patch("ad_sync.read_directory", return_value=(snapshot, [("Workstations", "Empty")])):
+            self.assertEqual(sync_directory(), 0)
+        with patch("ad_sync.read_directory", side_effect=ConnectionError):
+            self.assertEqual(sync_directory(), 1)
         with psycopg.connect(database_url()) as db:
-            db.execute("INSERT INTO ad_workstations VALUES (%s,%s,%s,%s)",
-                       (matched, "workstation.example.test", "MATCH", ["Workstations", "North"]))
-            db.execute("INSERT INTO ad_workstations VALUES (%s,%s,%s,%s)",
-                       (ad_only, "directory-only.example.test", "DIRECTORY", ["Workstations", "South"]))
-            db.execute("INSERT INTO ad_sync_status VALUES (true,now(),now(),'failed',2)")
             db.execute("UPDATE devices SET windows_enrollment=true,metadata='{\"addresses\":[\"192.0.2.41\"]}' "
                        "WHERE id=%s", (self.device,))
             db.execute("INSERT INTO device_enrollment_certificates(fingerprint,device_id,enrollment_until) "
@@ -367,6 +372,7 @@ class PostgresTests(unittest.TestCase):
             self.assertFalse(register(db, "a"*64, UUID(self.device), "e"*64))
         merged = client.get("/v2/workspace", headers=headers).json()
         self.assertEqual(merged["sync"]["result"], "failed")
+        self.assertIn(["Workstations", "Empty"], merged["ou_paths"])
         self.assertEqual(len(merged["rows"]), 2)
         self.assertTrue(any(row["device_id"] == self.device and row["ad_id"] == str(matched)
                             for row in merged["rows"]))

@@ -402,7 +402,9 @@ def install_routes(app, get_db, bearer):
             dict(username=user["username"], q=q, favorites=favorites, units=units,
                  depth=len(units), sort=sort, offset=offset),
         ).fetchall()
-        paths = db.execute("SELECT DISTINCT ou_path FROM ad_workstations ORDER BY ou_path").fetchall()
+        paths = db.execute(
+            "SELECT ou_path FROM ad_organizational_units UNION SELECT ou_path FROM ad_workstations ORDER BY ou_path",
+        ).fetchall()
         sync = db.execute("SELECT attempted_at,successful_at,result,computer_count FROM ad_sync_status").fetchone()
         return {"rows": rows[:100], "has_next": len(rows) > 100,
                 "ou_paths": [row["ou_path"] for row in paths], "sync": sync}

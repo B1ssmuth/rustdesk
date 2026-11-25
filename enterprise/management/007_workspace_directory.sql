@@ -5,6 +5,9 @@ CREATE TABLE ad_workstations (
     ou_path text[] NOT NULL
 );
 CREATE INDEX ad_workstations_dns ON ad_workstations(lower(dns_name));
+CREATE TABLE ad_organizational_units (
+    ou_path text[] PRIMARY KEY
+);
 CREATE TABLE ad_sync_status (
     singleton boolean PRIMARY KEY CHECK (singleton),
     attempted_at timestamptz NOT NULL,
