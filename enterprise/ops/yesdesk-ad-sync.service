@@ -1,0 +1,18 @@
+[Unit]
+Description=Refresh the YES Desk read-only AD catalog
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=yesdesk-ad
+Group=yesdesk-ad
+EnvironmentFile=/etc/yesdesk/ad-sync.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/yesdesk/venv/bin/python /opt/yesdesk/management/ad_sync.py
+TimeoutStartSec=180
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0077
