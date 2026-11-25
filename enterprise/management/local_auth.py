@@ -454,11 +454,10 @@ def install_routes(app, get_db, bearer):
     def connection_policy(db, user, device_id):
         return db.execute(
             """SELECT COALESCE(p.attended, true) AS attended,
-                      COALESCE(d.windows_enrollment AND p.unattended_until>now()
-                               AND %(admin)s,false) AS unattended
+                      COALESCE(p.unattended_until>now() AND %(admin)s,false) AS unattended
                FROM local_device_grants g JOIN devices d ON d.id=g.device_id
                LEFT JOIN corporate_access_policy p ON p.device_id=d.id
-               WHERE g.username=%(username)s AND d.id=%(device)s AND d.enabled
+               WHERE g.username=%(username)s AND d.id=%(device)s AND d.enabled AND d.windows_enrollment
                  AND d.agent_hash IS NOT NULL AND d.last_heartbeat > now()-interval '2 minutes'""",
             {"username": user["username"], "device": device_id, "admin": user["role"] == "admin"},
         ).fetchone() or {"attended": False, "unattended": False}

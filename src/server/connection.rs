@@ -220,6 +220,7 @@ pub struct Connection {
     inner: ConnInner,
     display_idx: usize,
     stream: super::Stream,
+    corporate_channel_binding: Option<super::hmacsha256::Tag>,
     server: super::ServerPtrWeak,
     hash: Hash,
     read_jobs: Vec<fs::TransferJob>,
@@ -364,6 +365,7 @@ impl Connection {
         id: i32,
         server: super::ServerPtrWeak,
         control_permissions: Option<ControlPermissions>,
+        corporate_channel_binding: Option<super::hmacsha256::Tag>,
     ) {
         // Android is not supported yet, so we always set control_permissions to None.
         #[cfg(target_os = "android")]
@@ -409,6 +411,7 @@ impl Connection {
             require_2fa: crate::auth_2fa::get_2fa(None),
             display_idx: *display_service::PRIMARY_DISPLAY_IDX,
             stream,
+            corporate_channel_binding,
             server,
             hash,
             read_jobs: Vec::new(),
@@ -2226,8 +2229,14 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
-        if let Some(reason) = reject_corporate_access(&msg, self.stream.is_secured()) {
-            self.send_login_error(reason).await;
+        if let Some(denial) = reject_corporate_access(&msg, self.corporate_channel_binding.as_ref()) {
+            log::warn!("Corporate access rejected on connection {}: {:?}", self.inner.id(), denial);
+            let error = if denial == CorporateDenial::UnboundTransport {
+                "yesdesk_corporate_transport_required"
+            } else {
+                "yesdesk_corporate_access_unavailable"
+            };
+            self.send_login_error(error).await;
             return false;
         }
         match legacy_switch_message(&msg) {
@@ -4812,15 +4821,32 @@ enum LegacySwitch {
     ReverseLogin,
 }
 
-fn reject_corporate_access(msg: &Message, secured: bool) -> Option<&'static str> {
-    match &msg.union {
-        Some(message::Union::CorporateAccessRequest(_)) if !secured => {
-            Some("yesdesk_corporate_transport_required")
-        }
-        // Stream encryption alone does not prove which operator or device owns a grant.
-        Some(message::Union::CorporateAccessRequest(_)) => Some("yesdesk_corporate_access_unavailable"),
-        _ => None,
+#[derive(Debug, PartialEq, Eq)]
+enum CorporateDenial {
+    UnboundTransport,
+    UnsupportedVersion,
+    WrongChannel,
+    EndpointVerificationUnavailable,
+}
+
+fn reject_corporate_access(
+    msg: &Message,
+    channel_binding: Option<&super::hmacsha256::Tag>,
+) -> Option<CorporateDenial> {
+    let Some(message::Union::CorporateAccessRequest(request)) = &msg.union else {
+        return None;
+    };
+    let Some(binding) = channel_binding else {
+        return Some(CorporateDenial::UnboundTransport);
+    };
+    if request.protocol_version != 1 {
+        return Some(CorporateDenial::UnsupportedVersion);
     }
+    if !hbb_common::sodiumoxide::utils::memcmp(binding.as_ref(), request.channel_binding.as_ref()) {
+        return Some(CorporateDenial::WrongChannel);
+    }
+    // A bound packet still requires verified operator and endpoint identities.
+    Some(CorporateDenial::EndpointVerificationUnavailable)
 }
 
 fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
@@ -4838,21 +4864,37 @@ mod switch_sides_tests {
     use super::*;
 
     #[test]
-    fn corporate_message_is_distinct_from_ordinary_password_login() {
+    fn corporate_message_requires_a_bound_channel_and_cannot_authorize_login() {
+        let key = super::super::secretbox::Key([1; 32]);
+        let first = super::super::corporate_channel_binding(&key, &super::super::box_::PublicKey([2; 32]));
+        let second = super::super::corporate_channel_binding(&key, &super::super::box_::PublicKey([3; 32]));
         let mut message = Message::new();
-        message.set_corporate_access_request(CorporateAccessRequest::default());
+        message.set_corporate_access_request(CorporateAccessRequest {
+            protocol_version: 1,
+            channel_binding: first.as_ref().to_vec().into(),
+            ..Default::default()
+        });
         let decoded = Message::parse_from_bytes(&message.write_to_bytes().unwrap()).unwrap();
         assert_eq!(
-            reject_corporate_access(&decoded, false),
-            Some("yesdesk_corporate_transport_required")
+            reject_corporate_access(&decoded, None),
+            Some(CorporateDenial::UnboundTransport)
         );
         assert_eq!(
-            reject_corporate_access(&decoded, true),
-            Some("yesdesk_corporate_access_unavailable")
+            reject_corporate_access(&decoded, Some(&second)),
+            Some(CorporateDenial::WrongChannel)
+        );
+        assert_eq!(
+            reject_corporate_access(&decoded, Some(&first)),
+            Some(CorporateDenial::EndpointVerificationUnavailable)
+        );
+        message.mut_corporate_access_request().protocol_version = 0;
+        assert_eq!(
+            reject_corporate_access(&message, Some(&first)),
+            Some(CorporateDenial::UnsupportedVersion)
         );
         message.set_login_request(LoginRequest::default());
-        assert_eq!(reject_corporate_access(&message, false), None);
-        assert_eq!(reject_corporate_access(&message, true), None);
+        assert_eq!(reject_corporate_access(&message, None), None);
+        assert_eq!(reject_corporate_access(&message, Some(&first)), None);
     }
 
     #[test]

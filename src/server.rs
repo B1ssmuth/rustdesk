@@ -21,7 +21,7 @@ use hbb_common::{
     protobuf::{Enum, Message as _},
     rendezvous_proto::*,
     socket_client,
-    sodiumoxide::crypto::{box_, sign},
+    sodiumoxide::crypto::{auth::hmacsha256, box_, secretbox, sign},
     timeout, tokio, ResultType, Stream,
 };
 use scrap::camera;
@@ -31,6 +31,15 @@ use service::{EmptyExtraFieldService, GenericService, Service, Subscriber};
 use video_service::VideoSource;
 
 use crate::ipc::Data;
+
+fn corporate_channel_binding(
+    key: &secretbox::Key,
+    endpoint_ephemeral: &box_::PublicKey,
+) -> hmacsha256::Tag {
+    let mut input = b"YES Desk corporate channel binding v1\0".to_vec();
+    input.extend_from_slice(endpoint_ephemeral.as_ref());
+    hmacsha256::authenticate(&input, &hmacsha256::Key(key.0))
+}
 
 pub mod audio_service;
 #[cfg(target_os = "windows")]
@@ -196,6 +205,7 @@ pub async fn create_tcp_connection(
     let mut stream = stream;
     let id = server.write().unwrap().get_new_id();
     let (sk, pk) = Config::get_key_pair();
+    let mut channel_binding = None;
     if secure && pk.len() == sign::PUBLICKEYBYTES && sk.len() == sign::SECRETKEYBYTES {
         let mut sk_ = [0u8; sign::SECRETKEYBYTES];
         sk_[..].copy_from_slice(&sk);
@@ -223,11 +233,13 @@ pub async fn create_tcp_connection(
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
                     if let Some(message::Union::PublicKey(pk)) = msg_in.union {
                         if pk.asymmetric_value.len() == box_::PUBLICKEYBYTES {
-                            stream.set_key(tcp::Encrypt::decode(
+                            let key = tcp::Encrypt::decode(
                                 &pk.symmetric_value,
                                 &pk.asymmetric_value,
                                 &our_sk_b,
-                            )?);
+                            )?;
+                            channel_binding = Some(corporate_channel_binding(&key, &our_pk_b));
+                            stream.set_key(key);
                         } else if pk.asymmetric_value.is_empty() {
                             Config::set_key_confirmed(false);
                             log::info!("Force to update pk");
@@ -265,6 +277,7 @@ pub async fn create_tcp_connection(
         id,
         Arc::downgrade(&server),
         control_permissions,
+        channel_binding,
     )
     .await;
     Ok(())

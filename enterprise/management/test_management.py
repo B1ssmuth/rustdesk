@@ -265,6 +265,13 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 403)
         with psycopg.connect(database_url()) as db:
             db.execute("INSERT INTO local_device_grants VALUES ('catalog-admin',%s)", (machine,))
+            db.execute("INSERT INTO local_device_grants VALUES ('catalog-admin',%s)", (self.device,))
+            db.execute("UPDATE devices SET agent_hash=%s,last_heartbeat=now() WHERE id=%s",
+                       ("f" * 64, self.device))
+        unmanaged = f"/v2/devices/{self.device}"
+        self.assertEqual(client.post(unmanaged + "/connection", headers=authorization).status_code, 403)
+        self.assertEqual(client.get(unmanaged + "/connection-options", headers=authorization).json()["attended"],
+                         {"eligible": False, "available": False})
         self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 501)
         self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 403)
         options = client.get(path + "/connection-options", headers=authorization).json()
@@ -280,6 +287,10 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 403)
         self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 501)
         with psycopg.connect(database_url()) as db:
+            db.execute("DELETE FROM local_device_grants WHERE username='catalog-admin' AND device_id=%s", (machine,))
+        self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 403)
+        with psycopg.connect(database_url()) as db:
+            db.execute("INSERT INTO local_device_grants VALUES ('catalog-admin',%s)", (machine,))
             db.execute("UPDATE corporate_access_policy SET unattended_until=now()-interval '1 minute' WHERE device_id=%s",
                        (machine,))
         self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 403)

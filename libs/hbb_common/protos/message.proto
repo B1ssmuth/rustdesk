@@ -951,6 +951,9 @@ message TerminalResponse {
 // does not carry a grant and must never enter the ordinary login path.
 message CorporateAccessRequest {
   uint32 protocol_version = 1;
+  // HMAC over the receiver's ephemeral handshake key. This is a channel
+  // binding, never an operator credential or a grant.
+  bytes channel_binding = 2;
 }
 
 message Message {
