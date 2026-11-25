@@ -76,6 +76,27 @@
 
 		<MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" />
 
+		<?ifdef CorporateAgentSource?>
+		<Property Id="YESDESK_AGENT_EXISTING">
+			<RegistrySearch Id="YesDeskCorporateAgentService" Root="HKLM" Bitness="always64"
+				Key="SYSTEM\CurrentControlSet\Services\YESDeskAgent" Name="ImagePath" Type="raw" />
+		</Property>
+		<Launch Condition="Installed OR (NOT WIX_UPGRADE_DETECTED AND NOT YESDESK_AGENT_EXISTING AND NOT YESDESK_EXISTING_SERVICE)"
+			Message="The unified pilot package requires a clean test computer. Existing YES Desk installations and services must be migrated separately." />
+		<Feature Id="CorporateAgent" Level="1" AllowAdvertise="no" AllowAbsent="no" Title="YES Desk Management Agent">
+			<ComponentRef Id="CorporateAgentService" />
+		</Feature>
+		<?else?>
+		<?ifdef YesDesk?>
+		<Property Id="YESDESK_UNIFIED_AGENT">
+			<RegistrySearch Id="YesDeskUnifiedAgentOwner" Root="HKLM" Bitness="always64"
+				Key="Software\YES Apart\YES Desk\Installer" Name="CorporateAgentIncluded" Type="raw" />
+		</Property>
+		<Launch Condition="Installed OR NOT YESDESK_UNIFIED_AGENT"
+			Message="The installed YES Desk Agent is owned by a unified pilot package. Use the approved migration procedure." />
+		<?endif?>
+		<?endif?>
+
 		<Feature Id="App" Level="1" AllowAdvertise="no" Display="expand" Title="!(loc.F_App)" Description="!(loc.F_App_Desc)" AllowAbsent="no">
 			<ComponentGroupRef Id="Components" />
 

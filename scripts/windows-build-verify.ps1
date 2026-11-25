@@ -70,6 +70,31 @@ function Assert-YesDeskMsi([string] $Path, [string] $Version) {
     }
 }
 
+function Assert-CorporateMsi([string] $Path) {
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    try {
+        $database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($Path, 0))
+        try {
+            $services = @(Get-MsiStrings $database 'SELECT `Name` FROM `ServiceInstall`')
+            $controls = @(Get-MsiStrings $database 'SELECT `Name` FROM `ServiceControl`')
+            $files = @(Get-MsiStrings $database 'SELECT `FileName` FROM `File`' |
+                ForEach-Object { ($_ -split '\|')[-1] })
+            $features = @(Get-MsiStrings $database 'SELECT `Feature` FROM `Feature`')
+            if ($services.Count -ne 2 -or $controls.Count -ne 2 -or
+                'YES Desk' -notin $services -or 'YESDeskAgent' -notin $services -or
+                'YES Desk' -notin $controls -or 'YESDeskAgent' -notin $controls -or
+                'CorporateAgent' -notin $features -or @($files -eq 'YesDeskAgent.exe').Count -ne 1) {
+                throw 'Unified MSI must contain both service definitions and exactly one Windows Agent binary.'
+            }
+            Write-Host 'Verified YES Desk and YESDeskAgent services in unified MSI.'
+        } finally {
+            [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
+        }
+    } finally {
+        [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer)
+    }
+}
+
 function Assert-EmbeddedMsi([string] $Payload, [string] $Portable, [string] $MsiHash) {
     # The packer includes data.bin unchanged. Verify its presence before inspecting its records.
     $payloadBytes = [IO.File]::ReadAllBytes($Payload)

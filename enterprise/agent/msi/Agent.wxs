@@ -2,6 +2,13 @@
   <Package Name="YES Desk Windows Agent" Manufacturer="YES Apart" Version="1.0.1"
            UpgradeCode="4250C5DB-5E09-44AB-816C-4082BB30DEB6" Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer YES Desk Agent is already installed." />
+    <Property Id="YESDESK_UNIFIED_AGENT">
+      <RegistrySearch Id="UnifiedAgentOwner" Root="HKLM" Bitness="always64"
+                      Key="Software\YES Apart\YES Desk\Installer"
+                      Name="CorporateAgentIncluded" Type="raw" />
+    </Property>
+    <Launch Condition="Installed OR NOT YESDESK_UNIFIED_AGENT"
+            Message="The YES Desk Agent is already managed by the unified installer." />
     <MediaTemplate EmbedCab="yes" />
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="YES Desk Agent">
