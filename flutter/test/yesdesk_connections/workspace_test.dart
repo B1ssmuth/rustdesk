@@ -109,6 +109,8 @@ void main() {
         ),
       )),
     ));
+    await pumpUntil(tester,
+        () => find.byType(LinearProgressIndicator).evaluate().isEmpty);
     await tester.pumpAndSettle();
     expect(queries, isEmpty);
     expect(find.text('Corporate devices'), findsNothing);
