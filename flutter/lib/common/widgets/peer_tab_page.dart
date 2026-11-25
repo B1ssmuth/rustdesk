@@ -23,6 +23,7 @@ import 'package:flutter_hbb/yesdesk/connections/desktop_connections_stub.dart'
     if (dart.library.io) 'package:flutter_hbb/yesdesk/connections/desktop_connections.dart';
 import 'package:flutter_hbb/yesdesk/ssh/widgets/ssh_strings.dart';
 import 'package:flutter_hbb/yesdesk/enterprise/corporate_session.dart';
+import 'package:flutter_hbb/yesdesk/enterprise/corporate_account.dart';
 import 'package:flutter_hbb/yesdesk/theme.dart';
 import 'package:flutter_hbb/yesdesk/widgets.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -254,6 +255,7 @@ class _PeerTabPageState extends State<PeerTabPage>
   }
 
   Widget _buildWorkspace(PeerTabModel model, Widget header) {
+    if (isWindows && !isWeb) return _buildUnifiedWorkspace(header);
     final colors = YesDeskColors.of(context);
     final tabs = model.visibleEnabledOrderedIndexs;
     final desktop = isDesktop && !isWeb;
@@ -463,21 +465,24 @@ class _PeerTabPageState extends State<PeerTabPage>
                           );
                         }),
                       ),
-                      if (professional && _visited.contains(_WorkspaceSection.ssh))
+                      if (professional &&
+                          _visited.contains(_WorkspaceSection.ssh))
                         ExcludeFocus(
                           excluding: !sshSelected,
                           child: _connections.ssh(workspaceLanguage),
                         )
                       else
                         const SizedBox.shrink(),
-                      if (professional && _visited.contains(_WorkspaceSection.rdp))
+                      if (professional &&
+                          _visited.contains(_WorkspaceSection.rdp))
                         ExcludeFocus(
                           excluding: !rdpSelected,
                           child: _connections.rdp(workspaceLanguage),
                         )
                       else
                         const SizedBox.shrink(),
-                      if (professional && _visited.contains(_WorkspaceSection.catalog))
+                      if (professional &&
+                          _visited.contains(_WorkspaceSection.catalog))
                         ExcludeFocus(
                           excluding: !catalogSelected,
                           child: _connections.catalog(workspaceLanguage,
@@ -494,6 +499,71 @@ class _PeerTabPageState extends State<PeerTabPage>
         ],
       );
     });
+  }
+
+  Widget _buildUnifiedWorkspace(Widget quickConnect) {
+    final language = bind.mainGetLocalOption(key: 'lang');
+    final locale = language.isEmpty ? localeName.toString() : language;
+    final labels = SshStrings(locale);
+    final professional = corporateSession.isAdmin;
+    final section = professional ? _section : _WorkspaceSection.devices;
+    final selected = switch (section) {
+      _WorkspaceSection.ssh => 1,
+      _WorkspaceSection.rdp => 2,
+      _ => 0,
+    };
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: YesDeskSpace.sm),
+        child: Row(children: [
+          Expanded(
+              child: Text(labels.text('IT workspace', 'Рабочее пространство'),
+                  style: Theme.of(context).textTheme.titleMedium)),
+          WorkspaceAccount(ru: locale.toLowerCase().startsWith('ru')),
+        ]),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: YesDeskSpace.sm),
+        child: quickConnect,
+      ),
+      if (professional)
+        Wrap(children: [
+          ChoiceChip(
+              label: Text(labels.text('Devices', 'Устройства')),
+              selected: selected == 0,
+              onSelected: (_) => _openSection(_WorkspaceSection.devices)),
+          ChoiceChip(
+              label: const Text('SSH / SFTP'),
+              selected: selected == 1,
+              onSelected: (_) => _openSection(_WorkspaceSection.ssh)),
+          if (!bind.isIncomingOnly())
+            ChoiceChip(
+                label: const Text('Windows RDP'),
+                selected: selected == 2,
+                onSelected: (_) => _openSection(_WorkspaceSection.rdp)),
+        ]),
+      Expanded(
+          child:
+              IndexedStack(index: selected, sizing: StackFit.expand, children: [
+        ExcludeFocus(
+            excluding: selected != 0,
+            child: _connections.catalog(locale,
+                visible: selected == 0,
+                unified: true,
+                allowProfessional: professional,
+                managementAvailable: corporateSession.canReadDirectory)),
+        if (professional && _visited.contains(_WorkspaceSection.ssh))
+          ExcludeFocus(
+              excluding: selected != 1, child: _connections.ssh(locale))
+        else
+          const SizedBox.shrink(),
+        if (professional && _visited.contains(_WorkspaceSection.rdp))
+          ExcludeFocus(
+              excluding: selected != 2, child: _connections.rdp(locale))
+        else
+          const SizedBox.shrink(),
+      ])),
+    ]);
   }
 
   Future<void> _selectTab(int tab) async {

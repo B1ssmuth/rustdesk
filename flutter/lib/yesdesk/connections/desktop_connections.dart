@@ -33,6 +33,7 @@ class DesktopConnections {
   Set<String> _remoteIds = {};
   bool _disposed = false;
   bool _readingWindows = false;
+  bool _observingPeers = false;
   late final _repository = ConnectionRepository(
     ssh: _sshRepository,
     rdp: _rdpStore,
@@ -44,17 +45,34 @@ class DesktopConnections {
     openSshTab: _openSsh,
   );
 
-  Widget catalog(String language, {required bool visible}) =>
-      ConnectionsWorkspace(
-        key: _catalog,
-        language: language,
-        visible: visible,
-        repository: _repository,
-        launcher: _launcher,
-        activity: _activity,
-        sessionChanges: _changes,
-        refreshActivity: _readRemoteTabs,
-      );
+  Widget catalog(String language,
+      {required bool visible,
+      bool unified = false,
+      bool allowProfessional = true,
+      bool managementAvailable = false}) {
+    if (unified && !_observingPeers) {
+      _observingPeers = true;
+      gFFI.lanPeersModel.addListener(_refreshCatalog);
+      unawaited(bind.mainLoadLanPeers());
+    }
+    return ConnectionsWorkspace(
+      key: _catalog,
+      language: language,
+      visible: visible,
+      repository: _repository,
+      launcher: _launcher,
+      activity: _activity,
+      sessionChanges: _changes,
+      refreshActivity: _readRemoteTabs,
+      unified: unified,
+      allowProfessional: allowProfessional,
+      managementAvailable: managementAvailable,
+    );
+  }
+
+  void _refreshCatalog() {
+    if (!_disposed) unawaited(_catalog.currentState?.reload());
+  }
 
   Widget ssh(String language) => SshWorkspace(
         key: _ssh,
@@ -78,6 +96,7 @@ class DesktopConnections {
 
   void dispose() {
     _disposed = true;
+    if (_observingPeers) gFFI.lanPeersModel.removeListener(_refreshCatalog);
     _changes.dispose();
   }
 
@@ -174,6 +193,25 @@ class DesktopConnections {
               : DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true),
         );
       }
+    }
+    for (final peer in [
+      ...gFFI.abModel.allPeers(),
+      ...gFFI.lanPeersModel.peers
+    ]) {
+      if (peer.id.isEmpty) continue;
+      byId.putIfAbsent(
+          peer.id,
+          () => (
+                id: peer.id,
+                name: peer.alias.isNotEmpty
+                    ? peer.alias
+                    : peer.hostname.isNotEmpty
+                        ? peer.hostname
+                        : peer.id,
+                username: peer.username,
+                favorite: favorites.contains(peer.id),
+                recentAt: null,
+              ));
     }
     for (final id in favorites.where((id) => id.isNotEmpty)) {
       byId.putIfAbsent(

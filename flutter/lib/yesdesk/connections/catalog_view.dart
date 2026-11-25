@@ -55,6 +55,7 @@ class ConnectionCatalog {
       final target = [
         profile.name,
         profile.address,
+        profile.username,
         profile.type.name,
         typeLabel?.call(profile.type) ?? '',
         ...profile.tags,

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../ssh/widgets/ssh_dialogs.dart';
 import '../ssh/widgets/ssh_strings.dart';
 import '../theme.dart';
+import '../enterprise/managed_workspace.dart';
 import 'catalog_codec.dart';
 import 'catalog_view.dart';
 import 'connection_editor.dart';
@@ -29,6 +30,10 @@ class ConnectionsWorkspace extends StatefulWidget {
     this.visible = true,
     this.sessionChanges,
     this.refreshActivity,
+    this.unified = false,
+    this.allowProfessional = true,
+    this.managementAvailable = false,
+    this.managementApi,
   });
 
   final String language;
@@ -38,6 +43,10 @@ class ConnectionsWorkspace extends StatefulWidget {
   final bool visible;
   final Listenable? sessionChanges;
   final Future<void> Function()? refreshActivity;
+  final bool unified;
+  final bool allowProfessional;
+  final bool managementAvailable;
+  final WorkspaceApi? managementApi;
 
   @override
   State<ConnectionsWorkspace> createState() => ConnectionsWorkspaceState();
@@ -59,6 +68,7 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
   bool _loading = false;
   bool _loadFailed = false;
   bool _writing = false;
+  bool _managed = false;
   Timer? _poll;
   SshStrings get l => SshStrings(widget.language);
   String t(String en, String ru) => l.text(en, ru);
@@ -66,6 +76,7 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
   @override
   void initState() {
     super.initState();
+    _managed = widget.managementAvailable;
     widget.sessionChanges?.addListener(_changed);
     if (widget.visible) _activate();
   }
@@ -75,6 +86,11 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
     super.didUpdateWidget(oldWidget);
     if (widget.visible && !oldWidget.visible) _activate();
     if (!widget.visible) _poll?.cancel();
+    if (oldWidget.managementAvailable != widget.managementAvailable) {
+      _managed = widget.managementAvailable;
+      _filter = CatalogFilter.all;
+      _selected = null;
+    }
   }
 
   void _activate() {
@@ -187,6 +203,8 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
   }
 
   Future<void> _connect(ConnectionProfile profile) async {
+    if (!widget.allowProfessional &&
+        profile.type != ConnectionType.remoteDesktop) return;
     if (!_launching.add(profile.id)) return;
     setState(() {});
     try {
@@ -472,22 +490,24 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
           controller: _toolbarScroll,
           scrollDirection: Axis.horizontal,
           child: Row(children: [
-            TextButton.icon(
-                onPressed: enabled ? () => _edit() : null,
-                icon: const Icon(Icons.add),
-                label: Text(t('New connection', 'Новое подключение'))),
-            IconButton(
-                tooltip: t('New folder', 'Новая папка'),
-                onPressed: enabled ? () => _folderEditor() : null,
-                icon: const Icon(Icons.create_new_folder_outlined)),
-            IconButton(
-                tooltip: t('Import profiles', 'Импорт профилей'),
-                onPressed: enabled ? _import : null,
-                icon: const Icon(Icons.file_open_outlined)),
-            IconButton(
-                tooltip: t('Export profiles', 'Экспорт профилей'),
-                onPressed: enabled ? _export : null,
-                icon: const Icon(Icons.save_alt)),
+            if (widget.allowProfessional && !_managed) ...[
+              TextButton.icon(
+                  onPressed: enabled ? () => _edit() : null,
+                  icon: const Icon(Icons.add),
+                  label: Text(t('New connection', 'Новое подключение'))),
+              IconButton(
+                  tooltip: t('New folder', 'Новая папка'),
+                  onPressed: enabled ? () => _folderEditor() : null,
+                  icon: const Icon(Icons.create_new_folder_outlined)),
+              IconButton(
+                  tooltip: t('Import profiles', 'Импорт профилей'),
+                  onPressed: enabled ? _import : null,
+                  icon: const Icon(Icons.file_open_outlined)),
+              IconButton(
+                  tooltip: t('Export profiles', 'Экспорт профилей'),
+                  onPressed: enabled ? _export : null,
+                  icon: const Icon(Icons.save_alt)),
+            ],
             IconButton(
                 tooltip: _tiles
                     ? t('Table view', 'Таблица')
@@ -495,45 +515,47 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
                 onPressed: () => setState(() => _tiles = !_tiles),
                 icon:
                     Icon(_tiles ? Icons.table_rows_outlined : Icons.grid_view)),
-            PopupMenuButton<CatalogSort>(
-              tooltip: t('Sort', 'Сортировка'),
-              icon: const Icon(Icons.sort),
-              onSelected: (value) => setState(() => _sort = value),
-              itemBuilder: (_) => [
-                for (final entry in {
-                  CatalogSort.name: l.name,
-                  CatalogSort.address: t('Address', 'Адрес'),
-                  CatalogSort.type: t('Type', 'Тип'),
-                  CatalogSort.recent: t('Last used', 'Последний запуск'),
-                }.entries)
+            if (!_managed)
+              PopupMenuButton<CatalogSort>(
+                tooltip: t('Sort', 'Сортировка'),
+                icon: const Icon(Icons.sort),
+                onSelected: (value) => setState(() => _sort = value),
+                itemBuilder: (_) => [
+                  for (final entry in {
+                    CatalogSort.name: l.name,
+                    CatalogSort.address: t('Address', 'Адрес'),
+                    CatalogSort.type: t('Type', 'Тип'),
+                    CatalogSort.recent: t('Last used', 'Последний запуск'),
+                  }.entries)
+                    CheckedPopupMenuItem(
+                        value: entry.key,
+                        checked: _sort == entry.key,
+                        child: Text(entry.value)),
+                ],
+              ),
+            if (!_managed && widget.allowProfessional)
+              PopupMenuButton<ConnectionType?>(
+                tooltip: t('Filter by type', 'Фильтр по типу'),
+                icon: const Icon(Icons.filter_alt_outlined),
+                onSelected: (value) => setState(() => _type = value),
+                itemBuilder: (_) => [
                   CheckedPopupMenuItem(
-                      value: entry.key,
-                      checked: _sort == entry.key,
-                      child: Text(entry.value)),
-              ],
-            ),
-            PopupMenuButton<ConnectionType?>(
-              tooltip: t('Filter by type', 'Фильтр по типу'),
-              icon: const Icon(Icons.filter_alt_outlined),
-              onSelected: (value) => setState(() => _type = value),
-              itemBuilder: (_) => [
-                CheckedPopupMenuItem(
-                  value: null,
-                  checked: _type == null,
-                  onTap: () => setState(() => _type = null),
-                  child: Text(t('All types', 'Все типы')),
-                ),
-                for (final type in ConnectionType.values)
-                  CheckedPopupMenuItem(
-                      value: type,
-                      checked: type == _type,
-                      child: Text(connectionTypeLabel(l, type))),
-              ],
-            ),
+                    value: null,
+                    checked: _type == null,
+                    onTap: () => setState(() => _type = null),
+                    child: Text(t('All types', 'Все типы')),
+                  ),
+                  for (final type in ConnectionType.values)
+                    CheckedPopupMenuItem(
+                        value: type,
+                        checked: type == _type,
+                        child: Text(connectionTypeLabel(l, type))),
+                ],
+              ),
             for (final entry in {
               CatalogFilter.all: t('All', 'Все'),
               CatalogFilter.favorites: l.favorite,
-              CatalogFilter.recent: t('Recent', 'Недавние'),
+              if (!_managed) CatalogFilter.recent: t('Recent', 'Недавние'),
             }.entries)
               TextButton(
                 onPressed: () => setState(() => _filter = entry.key),
@@ -547,7 +569,9 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
       );
 
   Widget _list(ConnectionCatalog catalog) {
-    final folders = catalog.folders.values
+    final folders = (widget.allowProfessional
+            ? catalog.folders.values
+            : const <ConnectionFolder>[])
         .where((f) => f.parentId == _folder)
         .toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -557,10 +581,10 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
         query: _query,
         filter: _filter,
         sort: _sort,
-        folderId: _folder,
-        type: _type,
+        folderId: widget.unified && _query.trim().isNotEmpty ? null : _folder,
+        type: widget.allowProfessional ? _type : ConnectionType.remoteDesktop,
         typeLabel: (type) => connectionTypeLabel(l, type));
-    final visible = browse
+    final visible = browse && widget.allowProfessional
         ? profiles.where((p) => p.folderId == _folder || p.pinned).toList()
         : profiles;
     return LayoutBuilder(builder: (context, bounds) {
@@ -622,23 +646,77 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
     });
   }
 
+  Widget _sourcePanel(String title, Widget content) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              child: Text(title)),
+          Expanded(child: content),
+        ],
+      );
+
   @override
   Widget build(BuildContext context) {
     final catalog = _catalog;
-    final selected = catalog?.profiles[_selected];
+    final profile = catalog?.profiles[_selected];
+    final selected = widget.allowProfessional ||
+            profile?.type == ConnectionType.remoteDesktop
+        ? profile
+        : null;
     final enabled = catalog != null && !_loadFailed && !_writing;
+    final combined = widget.managementAvailable && _query.trim().isNotEmpty;
+    final managed = ManagedWorkspace(
+        language: widget.language,
+        query: _query,
+        tiles: _tiles,
+        favorites: _filter == CatalogFilter.favorites,
+        api: widget.managementApi);
+    final local = _loadFailed
+        ? Center(
+            child: TextButton(
+                onPressed: reload,
+                child: Text(t('Could not load connections. Retry',
+                    'Не удалось загрузить подключения. Повторить'))))
+        : catalog == null
+            ? const SizedBox.shrink()
+            : LayoutBuilder(builder: (context, bounds) {
+                final list = _list(catalog);
+                if (selected == null) return list;
+                if (bounds.maxWidth >=
+                    MediaQuery.textScalerOf(context).scale(780)) {
+                  return Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: list),
+                        const VerticalDivider(width: 1),
+                        SizedBox(
+                            width: bounds.maxWidth * 0.32,
+                            child: _details(selected)),
+                      ]);
+                }
+                return Column(children: [
+                  Expanded(child: list),
+                  const Divider(height: 1),
+                  SizedBox(
+                      height: bounds.maxHeight * 0.42,
+                      child: _details(selected)),
+                ]);
+              });
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyF, control: true):
             _search.requestFocus,
-        const SingleActivator(LogicalKeyboardKey.keyN, control: true): () =>
-            _edit(),
+        if (widget.allowProfessional && !_managed)
+          const SingleActivator(LogicalKeyboardKey.keyN, control: true): () =>
+              _edit(),
         const SingleActivator(LogicalKeyboardKey.enter, control: true): () {
           if (selected != null) _connect(selected);
         },
-        const SingleActivator(LogicalKeyboardKey.f2): () {
-          if (selected != null) _edit(profile: selected);
-        },
+        if (widget.allowProfessional && !_managed)
+          const SingleActivator(LogicalKeyboardKey.f2): () {
+            if (selected != null) _edit(profile: selected);
+          },
         const SingleActivator(LogicalKeyboardKey.escape): () =>
             setState(() => _selected = null),
       },
@@ -652,12 +730,35 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
               onChanged: (value) => setState(() => _query = value),
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search),
-                labelText: t('Search connections', 'Поиск подключений'),
+                labelText: widget.unified
+                    ? t('Search computer, user, IP or ID',
+                        'Поиск по компьютеру, пользователю, IP или ID')
+                    : t('Search connections', 'Поиск подключений'),
               ),
             ),
           ),
+          if (widget.managementAvailable && !combined)
+            Wrap(children: [
+              ChoiceChip(
+                  label:
+                      Text(t('Corporate devices', 'Корпоративные устройства')),
+                  selected: _managed,
+                  onSelected: (_) => setState(() {
+                        _managed = true;
+                        if (_filter == CatalogFilter.recent)
+                          _filter = CatalogFilter.all;
+                      })),
+              ChoiceChip(
+                  label: Text(
+                      t('Saved and discovered', 'Сохранённые и обнаруженные')),
+                  selected: !_managed,
+                  onSelected: (_) => setState(() => _managed = false)),
+            ]),
           _toolbar(enabled),
-          if (_folder != null && catalog != null)
+          if (!_managed &&
+              widget.allowProfessional &&
+              _folder != null &&
+              catalog != null)
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(children: [
@@ -670,40 +771,37 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
                       child: Text('› ${folder.name}')),
               ]),
             ),
-          if (_loading) const LinearProgressIndicator(minHeight: 2),
+          if (_loading && !_managed)
+            const LinearProgressIndicator(minHeight: 2),
           const Divider(height: 1),
           Expanded(
-            child: _loadFailed
-                ? Center(
-                    child: TextButton(
-                        onPressed: reload,
-                        child: Text(t('Could not load connections. Retry',
-                            'Не удалось загрузить подключения. Повторить'))))
-                : catalog == null
-                    ? const SizedBox.shrink()
-                    : LayoutBuilder(builder: (context, bounds) {
-                        final list = _list(catalog);
-                        if (selected == null) return list;
-                        if (bounds.maxWidth >=
-                            MediaQuery.textScalerOf(context).scale(780)) {
-                          return Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(child: list),
-                                const VerticalDivider(width: 1),
-                                SizedBox(
-                                    width: bounds.maxWidth * 0.32,
-                                    child: _details(selected)),
-                              ]);
-                        }
-                        return Column(children: [
-                          Expanded(child: list),
-                          const Divider(height: 1),
-                          SizedBox(
-                              height: bounds.maxHeight * 0.42,
-                              child: _details(selected)),
-                        ]);
-                      }),
+            child: combined
+                ? LayoutBuilder(builder: (context, bounds) {
+                    final personalResult = Expanded(
+                        child: _sourcePanel(
+                            t('Saved and discovered',
+                                'Сохранённые и обнаруженные'),
+                            local));
+                    final corporateResult = Expanded(
+                        child: _sourcePanel(
+                            t('Corporate devices', 'Корпоративные устройства'),
+                            managed));
+                    if (bounds.maxWidth >= 900) {
+                      return Row(children: [
+                        personalResult,
+                        const VerticalDivider(width: 1),
+                        corporateResult
+                      ]);
+                    }
+                    return Column(children: [
+                      personalResult,
+                      const Divider(height: 1),
+                      corporateResult
+                    ]);
+                  })
+                : _managed && widget.managementAvailable
+                    ? managed
+                    : local,
           ),
         ]),
       ),

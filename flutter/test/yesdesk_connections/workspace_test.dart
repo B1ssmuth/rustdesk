@@ -69,6 +69,66 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets(
+      'unified workspace loads managed devices after login and clears them at expiry',
+      (tester) async {
+    final authenticated = ValueNotifier(false);
+    final queries = <Map<String, String>?>[];
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(extensions: [YesDeskColors.light]),
+      home: Scaffold(
+          body: ValueListenableBuilder<bool>(
+        valueListenable: authenticated,
+        builder: (_, enabled, __) => ConnectionsWorkspace(
+          language: 'en',
+          repository: repository,
+          launcher: launcher,
+          activity: (_) => ConnectionActivity.none,
+          unified: true,
+          allowProfessional: enabled,
+          managementAvailable: enabled,
+          managementApi: (path, {query, method = 'GET', body}) async {
+            expect(path, '/v2/workspace');
+            queries.add(query);
+            return {
+              'rows': [
+                {
+                  'hostname': 'Pilot AD workstation',
+                  'ad_id': 'ad-1',
+                  'device_id': null,
+                  'agent_registered': false
+                }
+              ],
+              'ou_paths': [
+                ['Workstations', 'Pilot']
+              ],
+              'has_next': false,
+              'sync': null,
+            };
+          },
+        ),
+      )),
+    ));
+    await tester.pumpAndSettle();
+    expect(queries, isEmpty);
+    expect(find.text('Corporate devices'), findsNothing);
+    authenticated.value = true;
+    await tester.pumpAndSettle();
+    expect(queries, isNotEmpty);
+    expect(find.text('Pilot AD workstation'), findsOneWidget);
+    expect(find.textContaining('No agent'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).first, '192.0.2.8');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(queries.last?['q'], '192.0.2.8');
+    expect(queries.last?['ou'], '[]');
+    authenticated.value = false;
+    await tester.pumpAndSettle();
+    expect(find.text('Pilot AD workstation'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    authenticated.dispose();
+  });
+
   testWidgets('English create form, search, details and quick launch',
       (tester) async {
     await mount(tester);
