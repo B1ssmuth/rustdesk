@@ -14,6 +14,9 @@ import psycopg
 from settings import database_url
 
 
+PAGED_RESULTS_OID = "1.2.840.113556.1.4.319"
+
+
 def dn_parts(dn):
     rdns = []
     components = []
@@ -54,16 +57,29 @@ def hotel_rules(path, base):
 
 
 def search(client, base, ldap_filter, attributes):
-    entries = client.extend.standard.paged_search(
-        base, ldap_filter, SUBTREE, attributes=attributes, paged_size=500,
-        paged_criticality=True, generator=True,
-    )
-    for entry in entries:
-        if entry["type"] != "searchResEntry":
+    cookie = None
+    while True:
+        # ldap3 returns False for a successful search with no entries.
+        client.search(base, ldap_filter, SUBTREE, attributes=attributes,
+                      paged_size=500, paged_criticality=True, paged_cookie=cookie)
+        result = client.result or {}
+        if result.get("type") != "searchResDone" or result.get("result") != 0:
             raise ValueError("Incomplete directory search")
-        yield entry
-    if client.result["result"] != 0:
-        raise ValueError("Incomplete directory search")
+        try:
+            cookie = result["controls"][PAGED_RESULTS_OID]["value"]["cookie"]
+        except (KeyError, TypeError):
+            raise ValueError("Incomplete directory search") from None
+        if not isinstance(cookie, bytes):
+            raise ValueError("Incomplete directory search")
+        for entry in client.response:
+            if entry.get("type") == "searchResRef":
+                # Continuation references are outside this server's snapshot scope.
+                continue
+            if entry.get("type") != "searchResEntry":
+                raise ValueError("Incomplete directory search")
+            yield entry
+        if not cookie:
+            return
 
 
 def sid_string(raw):

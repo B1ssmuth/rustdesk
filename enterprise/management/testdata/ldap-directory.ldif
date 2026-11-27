@@ -50,3 +50,9 @@ objectClass: inetOrgPerson
 cn: reader
 sn: Directory reader
 userPassword: fixture-read-only
+
+dn: ou=External,dc=example,dc=test
+objectClass: referral
+objectClass: extensibleObject
+ou: External
+ref: ldap://directory.example.invalid/ou=External,dc=example,dc=test
