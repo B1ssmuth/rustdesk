@@ -217,6 +217,12 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         }
     }
     if lang != "en" {
+        // Reuse the translated consent label until Allow is translated.
+        if name == "Allow" {
+            if let Some(v) = m.get("Accept").filter(|v| !v.is_empty()) {
+                return replace(v);
+            }
+        }
         if let Some(v) = en::T.get(&name as &str) {
             if !v.is_empty() {
                 return replace(v);
