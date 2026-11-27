@@ -109,31 +109,41 @@ $profiles = [ordered]@{
 }
 $configReport = foreach ($profile in $profiles.Keys) {
     foreach ($brand in @('RustDesk', 'YES Desk')) {
-        $directory = Join-Path $profiles[$profile] "$brand\config"
-        $identity = $null
-        $rendezvous = $null
-        try {
-            $identity = Test-Path -LiteralPath (Join-Path $directory "$brand.toml") -PathType Leaf
-            $rendezvous = Test-Path -LiteralPath (Join-Path $directory "${brand}2.toml") -PathType Leaf
-        } catch {
-            $reasons.Add("Cannot read $directory. Check it from a local elevated session.")
-        }
-        [pscustomobject]@{
-            Profile = $profile
-            Directory = $directory
-            IdentityFile = $identity
-            RendezvousSettingsFile = $rendezvous
+        foreach ($relative in @("$brand\config", "com.yesapart\$brand\config")) {
+            $directory = Join-Path $profiles[$profile] $relative
+            $identity = $null
+            $rendezvous = $null
+            try {
+                $identity = Test-Path -LiteralPath (Join-Path $directory "$brand.toml") -PathType Leaf
+                $rendezvous = Test-Path -LiteralPath (Join-Path $directory "${brand}2.toml") -PathType Leaf
+            } catch {
+                $reasons.Add("Cannot read $directory. Check it from a local elevated session.")
+            }
+            [pscustomobject]@{
+                Profile = $profile
+                Directory = $directory
+                IdentityFile = $identity
+                RendezvousSettingsFile = $rendezvous
+            }
         }
     }
 }
 $agent = Join-Path $env:ProgramData 'YESDeskAgent'
+$agentToken = $null
+$agentConfig = $null
+try {
+    $agentToken = Test-Path -LiteralPath (Join-Path $agent 'agent.token') -PathType Leaf
+    $agentConfig = Test-Path -LiteralPath (Join-Path $agent 'config.json') -PathType Leaf
+} catch {
+    $reasons.Add('Cannot read the agent state directory. Check it from a local elevated session.')
+}
 if ($services.Name -contains 'RustDesk') {
     $reasons.Add('RustDesk and YES Desk use different service and profile names. The running profile, original package and an identity-preserving conversion require verification.')
 }
 if ($services.Count -or $products.Count) {
     $reasons.Add('The current unified MSI blocks in-place replacement of previously registered products and services.')
 }
-if ($services.Name -contains 'YESDeskAgent' -and !(Test-Path -LiteralPath (Join-Path $agent 'agent.token') -PathType Leaf)) {
+if ($services.Name -contains 'YESDeskAgent' -and $agentToken -eq $false) {
     $reasons.Add('The expected protected YESDeskAgent token file was not found.')
 }
 [pscustomobject]@{
@@ -143,8 +153,8 @@ if ($services.Name -contains 'YESDeskAgent' -and !(Test-Path -LiteralPath (Join-
     Products = @($productReport)
     TransportProfiles = @($configReport)
     AgentDirectory = $agent
-    AgentTokenPresent = Test-Path -LiteralPath (Join-Path $agent 'agent.token') -PathType Leaf
-    AgentConfigPresent = Test-Path -LiteralPath (Join-Path $agent 'config.json') -PathType Leaf
+    AgentTokenPresent = $agentToken
+    AgentConfigPresent = $agentConfig
     CertificateThumbprints = @(Get-ChildItem Cert:\LocalMachine\My | ForEach-Object Thumbprint)
     Reasons = @($reasons.ToArray())
 } | ConvertTo-Json -Depth 6

@@ -62,12 +62,14 @@ if ($Role -eq 'Endpoint') {
         Export-Csv -LiteralPath (Join-Path $backup 'certificates.csv') -NoTypeInformation
 }
 foreach ($name in $homes.Keys) {
-    foreach ($product in @('RustDesk','YES Desk','YESDesk','YESDeskAgent')) {
+    foreach ($product in @('RustDesk','YES Desk','YESDesk','YESDeskAgent',
+            'com.yesapart\RustDesk','com.yesapart\YES Desk')) {
         $source = Join-Path $homes[$name] $product
         if (!(Test-Path -LiteralPath $source -PathType Container)) { continue }
         $root = Get-Item -LiteralPath $source
         if ($root.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { throw "Unexpected config junction: $source" }
-        $dest = Join-Path $backup "$name-$product"
+        $label = $product -replace '\\', '-'
+        $dest = Join-Path $backup "$name-$label"
         & robocopy.exe $source $dest /E /COPY:DAT /DCOPY:DAT /XJ /R:0 /W:0 /NFL /NDL /NJH /NJS /NP
         if ($LASTEXITCODE -ge 8) { throw "Configuration backup failed: $source" }
     }
