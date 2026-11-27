@@ -98,12 +98,11 @@ void main() {
                   'hostname': 'Pilot AD workstation',
                   'ad_id': 'ad-1',
                   'device_id': null,
+                  'hotel': 'Pilot Hotel',
                   'agent_registered': false
                 }
               ],
-              'ou_paths': [
-                ['Workstations', 'Pilot']
-              ],
+              'hotels': ['Pilot Hotel'],
               'has_next': false,
               'sync': null,
             };
@@ -123,11 +122,17 @@ void main() {
     expect(queries, isNotEmpty);
     expect(find.text('Pilot AD workstation'), findsOneWidget);
     expect(find.textContaining('No agent'), findsOneWidget);
+    expect(queries.last?['hotel'], isNull);
+    await tester.tap(find.widgetWithText(ListTile, 'Pilot Hotel').first);
+    await tester.pumpAndSettle();
+    expect(queries.last?['hotel'], 'Pilot Hotel');
     await tester.enterText(find.byType(TextField).first, '192.0.2.8');
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpAndSettle();
     expect(queries.last?['q'], '192.0.2.8');
-    expect(queries.last?['ou'], '[]');
+    expect(queries.last?['hotel'], 'Pilot Hotel');
+    expect(queries.last?['status'], 'all');
     authenticated.value = false;
     await tester.pumpAndSettle();
     expect(find.text('Pilot AD workstation'), findsNothing);

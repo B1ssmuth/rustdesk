@@ -51,6 +51,6 @@ Management API проверяет сессию и индивидуальные �
 
 ## Автоматические проверки
 
-Запустите `python -m unittest -v test_management test_ad_sync` в `enterprise/management`, используя зависимости из `requirements.txt` и `httpx`. Для PostgreSQL задайте `YESDESK_INTEGRATION=1` и путь `YESDESK_DATABASE_URL_FILE` к одноразовой базе с именем `yesdesk_enterprise_test`. Набор меняет тестовые таблицы. Для полного прогона LDAPS см. [описание синтетических данных](management/testdata/README.md). Для клиента выполните `flutter pub get --enforce-lockfile` и `flutter test --no-pub` в `flutter`.
+Запустите `python -m unittest -v test_management test_ad_sync` в `enterprise/management`, используя зависимости из `requirements.txt` и `httpx`. Для PostgreSQL задайте `YESDESK_INTEGRATION=1` и путь `YESDESK_DATABASE_URL_FILE` к одноразовой базе с именем `yesdesk_enterprise_test`. Набор меняет тестовые таблицы. Для полного прогона LDAPS см. [описание синтетических данных](management/testdata/README.md). Для клиента выполните `flutter pub get --enforce-lockfile`, сгенерируйте Flutter/Rust-мост из текущего коммита и запустите `flutter test --no-pub` в `flutter`. Для генерации используйте `-BridgeOnly -Ref HEAD` из [инструкции Windows](../docs/YESDESK-WINDOWS-LOCAL-BUILD.md) и запустите тесты в каталоге снимка сборки. Команда генерации для Linux приведена в [Bridge CI](../.github/workflows/bridge.yml).
 
 [Список безопасной очистки](SPRINT-4.1-CLEANUP.md).

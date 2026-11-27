@@ -60,6 +60,7 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
   final _search = FocusNode();
   final _shortcutFocus = FocusNode();
   final _toolbarScroll = ScrollController();
+  final _managedWorkspaceKey = GlobalKey();
   final _launching = <String>{};
   ConnectionCatalog? _catalog;
   String? _folder;
@@ -679,6 +680,7 @@ class ConnectionsWorkspaceState extends State<ConnectionsWorkspace> {
     final enabled = catalog != null && !_loadFailed && !_writing;
     final combined = widget.managementAvailable && _query.trim().isNotEmpty;
     final managed = ManagedWorkspace(
+        key: _managedWorkspaceKey,
         language: widget.language,
         query: _query,
         tiles: _tiles,
