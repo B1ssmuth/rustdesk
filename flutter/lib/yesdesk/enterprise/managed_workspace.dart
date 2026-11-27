@@ -35,6 +35,7 @@ class ManagedWorkspace extends StatefulWidget {
 
 class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   Timer? _search;
+  late final Timer _refresh;
   int _offset = 0;
   String? _hotel;
   String _statusFilter = 'all';
@@ -54,6 +55,8 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   void initState() {
     super.initState();
     _load();
+    _refresh =
+        Timer.periodic(const Duration(seconds: 30), (_) => setState(_load));
   }
 
   @override
@@ -74,6 +77,7 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   @override
   void dispose() {
     _search?.cancel();
+    _refresh.cancel();
     super.dispose();
   }
 
@@ -130,10 +134,10 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   }
 
   Future<void> _assignHotel(Map<String, dynamic> row) async {
-    final source = row['device_id'] == null ||
-            row['manual_hotel_source'] == 'ad'
-        ? 'ad'
-        : 'device';
+    final source =
+        row['device_id'] == null || row['manual_hotel_source'] == 'ad'
+            ? 'ad'
+            : 'device';
     final id = source == 'ad' ? row['ad_id'] : row['device_id'];
     if (id == null || !corporateSession.isAdmin) return;
     var value = (row['manual_hotel'] ?? row['hotel'] ?? '') as String;
@@ -219,8 +223,9 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   Widget _details(Map<String, dynamic> row) {
     final hardware = row['metadata'] as Map<String, dynamic>;
     final users = row['windows_users'] as List?;
-    final displayUsers =
-        users?.isNotEmpty == true ? users!.join(', ') : _value(row['windows_user']);
+    final displayUsers = users?.isNotEmpty == true
+        ? users!.join(', ')
+        : _value(row['windows_user']);
     return DefaultTabController(
         length: 2,
         child: Column(
@@ -474,7 +479,8 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
                     'offline': t('Offline', 'Не в сети'),
                     'no_agent': t('No agent', 'Без агента'),
                   }.entries)
-                    DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+                    DropdownMenuItem(
+                        value: entry.key, child: Text(entry.value)),
                 ],
               ),
               PopupMenuButton<String>(
@@ -539,15 +545,16 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
                   ? list
                   : narrow
                       ? Column(children: [
-                          SizedBox(height: 110, child: _tree(hotels)),
-                          Expanded(child: list),
+                          Expanded(child: _tree(hotels)),
+                          Expanded(flex: 2, child: list),
                         ])
                       : Row(children: [
                           SizedBox(width: 180, child: _tree(hotels)),
                           const VerticalDivider(width: 1),
                           Expanded(child: list),
                         ]);
-              final selected = rows.where((row) => _matchesSelection(row)).firstOrNull;
+              final selected =
+                  rows.where((row) => _matchesSelection(row)).firstOrNull;
               if (selected == null) return catalog;
               if (!narrow)
                 return Row(children: [

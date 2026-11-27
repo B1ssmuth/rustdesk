@@ -103,8 +103,8 @@ class _PeerTabPageState extends State<PeerTabPage>
   }
 
   void _openSection(_WorkspaceSection section) {
-    if (section != _WorkspaceSection.devices &&
-        !corporateSession.isAdmin) return;
+    if (section != _WorkspaceSection.devices && !corporateSession.isAdmin)
+      return;
     FocusManager.instance.primaryFocus?.unfocus();
     if (section == _WorkspaceSection.ssh) _connections.refreshSsh();
     if (section == _WorkspaceSection.rdp) _connections.refreshRdp();
