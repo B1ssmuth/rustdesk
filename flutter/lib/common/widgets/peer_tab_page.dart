@@ -103,8 +103,7 @@ class _PeerTabPageState extends State<PeerTabPage>
   }
 
   void _openSection(_WorkspaceSection section) {
-    if (isWindows &&
-        section != _WorkspaceSection.devices &&
+    if (section != _WorkspaceSection.devices &&
         !corporateSession.isAdmin) return;
     FocusManager.instance.primaryFocus?.unfocus();
     if (section == _WorkspaceSection.ssh) _connections.refreshSsh();
@@ -259,7 +258,7 @@ class _PeerTabPageState extends State<PeerTabPage>
     final colors = YesDeskColors.of(context);
     final tabs = model.visibleEnabledOrderedIndexs;
     final desktop = isDesktop && !isWeb;
-    final professional = !isWindows || corporateSession.isAdmin;
+    final professional = corporateSession.isAdmin;
     final supportsSsh = desktop && professional;
     final supportsRdp = supportsSsh && isWindows && !bind.isIncomingOnly();
     final language = desktop ? bind.mainGetLocalOption(key: 'lang') : '';
@@ -433,6 +432,14 @@ class _PeerTabPageState extends State<PeerTabPage>
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
+                                    if (desktop)
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: WorkspaceAccount(
+                                            ru: workspaceLanguage
+                                                .toLowerCase()
+                                                .startsWith('ru')),
+                                      ),
                                     Align(
                                       alignment: Alignment.centerLeft,
                                       child: ConstrainedBox(

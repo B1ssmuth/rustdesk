@@ -197,7 +197,7 @@ pub fn session_add_corporate_sync(
         let api = reqwest::Url::parse(&management_url)?;
         if api.scheme() != "https" || api.host().is_none() || api.query().is_some()
             || api.fragment().is_some() || api.password().is_some() || !api.username().is_empty()
-            || !matches!(mode.as_str(), "consent" | "unattended") {
+            || mode != "consent" {
             hbb_common::bail!("Invalid corporate connection parameters");
         }
         let mut endpoint_key = [0; 32];

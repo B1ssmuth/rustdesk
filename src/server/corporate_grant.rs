@@ -1,6 +1,6 @@
 use hbb_common::{
     base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine},
-    sodiumoxide::crypto::{auth::hmacsha256, sign},
+    sodiumoxide::crypto::{auth::hmacsha256, hash::sha256, sign},
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -28,10 +28,8 @@ impl Transport {
 
 struct Trust {
     device: Uuid,
-    certificate: [u8; 32],
     management_key: sign::PublicKey,
     consent: bool,
-    unattended: bool,
 }
 
 #[derive(Deserialize)]
@@ -41,20 +39,10 @@ struct Header {
     typ: String,
 }
 
-#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Mode {
     Consent,
-    Unattended,
-}
-
-impl Mode {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Consent => "consent",
-            Self::Unattended => "unattended",
-        }
-    }
 }
 
 fn valid_operator(operator: &str) -> bool {
@@ -81,7 +69,8 @@ struct Claims {
     device: String,
     endpoint: String,
     endpoint_key: String,
-    mode: Mode,
+    #[serde(rename = "mode")]
+    _mode: Mode,
     connection: String,
     handshake: String,
     iat: u64,
@@ -125,18 +114,16 @@ fn check_grant(
     {
         return Err(InvalidGrant);
     }
+    let endpoint_key = hex::encode(transport.endpoint_key);
     if claims.device != trust.device.to_string()
-        || claims.endpoint != hex::encode(trust.certificate)
-        || claims.endpoint_key != hex::encode(transport.endpoint_key)
+        || claims.endpoint != hex::encode(sha256::hash(endpoint_key.as_bytes()).as_ref())
+        || claims.endpoint_key != endpoint_key
         || claims.connection != transport.connection_id().to_string()
         || claims.handshake != hex::encode(transport.binding.as_ref())
     {
         return Err(GrantContextMismatch);
     }
-    if !match claims.mode {
-        Mode::Consent => trust.consent,
-        Mode::Unattended => trust.unattended,
-    } {
+    if !trust.consent {
         return Err(LocalPolicyDenied);
     }
     Ok(claims)
@@ -160,22 +147,15 @@ fn load_endpoint() -> Result<(Trust, reqwest::Url), CorporateDenial> {
         )
         .map_err(|_| unavailable)?;
     let device: String = key.get_value("DeviceId").map_err(|_| unavailable)?;
-    let certificate: String = key
-        .get_value("CertificateFingerprint")
-        .map_err(|_| unavailable)?;
     let management_key: String = key
         .get_value("ManagementSigningKey")
         .map_err(|_| unavailable)?;
-    let mut fingerprint = [0; 32];
     let mut public_key = [0; 32];
-    hex::decode_to_slice(certificate, &mut fingerprint).map_err(|_| unavailable)?;
     hex::decode_to_slice(management_key, &mut public_key).map_err(|_| unavailable)?;
     let trust = Trust {
         device: Uuid::parse_str(&device).map_err(|_| unavailable)?,
-        certificate: fingerprint,
         management_key: sign::PublicKey(public_key),
         consent: key.get_value::<u32, _>("AllowConsent").unwrap_or(0) == 1,
-        unattended: key.get_value::<u32, _>("AllowUnattended").unwrap_or(0) == 1,
     };
     let url: String = key.get_value("ManagementUrl").map_err(|_| unavailable)?;
     let url = reqwest::Url::parse(&url).map_err(|_| unavailable)?;
@@ -210,10 +190,9 @@ fn sign_proof<'a>(
     transport: &Transport,
     device: Uuid,
     operator: &'a str,
-    mode: Mode,
     grant: Option<&str>,
 ) -> Result<Proof<'a>, CorporateDenial> {
-    use hbb_common::{config::Config, sodiumoxide::crypto::hash::sha256};
+    use hbb_common::config::Config;
     let unavailable = CorporateDenial::EndpointVerificationUnavailable;
     let (secret, _) = Config::get_key_pair();
     let secret = sign::SecretKey::from_slice(&secret).ok_or(unavailable)?;
@@ -222,7 +201,7 @@ fn sign_proof<'a>(
     }
     let mut proof = Proof {
         operator,
-        mode: mode.as_str(),
+        mode: "consent",
         connection_id: transport.connection_id().to_string(),
         handshake: hex::encode(transport.binding.as_ref()),
         timestamp: epoch()?,
@@ -242,13 +221,14 @@ fn sign_proof<'a>(
 
 pub(super) struct Attempt {
     operator: String,
-    mode: Mode,
     deadline: std::time::Instant,
 }
 
 pub(super) struct Admission {
     pub(super) operator: String,
     pub(super) grant_id: String,
+    #[cfg(windows)]
+    pub(super) console: crate::platform::CorporateConsoleConsent,
 }
 
 pub(super) fn challenge(
@@ -256,22 +236,14 @@ pub(super) fn challenge(
     transport: &Transport,
 ) -> Result<(Attempt, hbb_common::message_proto::CorporateChallenge), CorporateDenial> {
     use CorporateDenial::*;
-    let mode = match request.mode.as_str() {
-        "consent" => Mode::Consent,
-        "unattended" => Mode::Unattended,
-        _ => return Err(InvalidGrant),
-    };
-    if !valid_operator(&request.operator) {
+    if request.mode != "consent" || !valid_operator(&request.operator) {
         return Err(InvalidGrant);
     }
     let (trust, _) = load_endpoint()?;
-    if !match mode {
-        Mode::Consent => trust.consent,
-        Mode::Unattended => trust.unattended,
-    } {
+    if !trust.consent {
         return Err(LocalPolicyDenied);
     }
-    let proof = sign_proof(transport, trust.device, &request.operator, mode, None)?;
+    let proof = sign_proof(transport, trust.device, &request.operator, None)?;
     let message = hbb_common::message_proto::CorporateChallenge {
         device_id: trust.device.to_string(),
         endpoint_key: transport.endpoint_key.to_vec().into(),
@@ -281,7 +253,6 @@ pub(super) fn challenge(
     Ok((
         Attempt {
             operator: request.operator.clone(),
-            mode,
             deadline: std::time::Instant::now() + Duration::from_secs(MAX_LIFETIME),
         },
         message,
@@ -323,19 +294,16 @@ pub(super) async fn redeem(
     use CorporateDenial::*;
     let (trust, _) = load_endpoint()?;
     let claims = check_grant(grant, transport, &trust, epoch()?)?;
-    if claims.sub != attempt.operator
-        || claims.mode != attempt.mode
-        || std::time::Instant::now() >= attempt.deadline
-    {
+    if claims.sub != attempt.operator || std::time::Instant::now() >= attempt.deadline {
         return Err(GrantContextMismatch);
     }
     #[cfg(windows)]
-    let console = if claims.mode == Mode::Consent {
+    let console = {
         let remaining = claims
             .exp
             .saturating_sub(epoch()?)
-            .saturating_sub(1)
-            .min(12);
+            .saturating_sub(5)
+            .min(20);
         if remaining == 0 {
             return Err(LocalConsentUnavailable);
         }
@@ -346,13 +314,7 @@ pub(super) async fn redeem(
         .await
         .map_err(|_| LocalConsentUnavailable)?;
         answer.ok_or(LocalConsentUnavailable)?
-    } else {
-        crate::platform::CorporateConsoleConsent::current().ok_or(LocalPolicyDenied)?
     };
-    #[cfg(not(windows))]
-    if claims.mode == Mode::Consent {
-        return Err(LocalConsentUnavailable);
-    }
     let (trust, mut api) = load_endpoint()?;
     check_grant(grant, transport, &trust, epoch()?)?;
     #[cfg(windows)]
@@ -375,13 +337,7 @@ pub(super) async fn redeem(
         proof: Proof<'a>,
         grant: &'a str,
     }
-    let proof = sign_proof(
-        transport,
-        trust.device,
-        &claims.sub,
-        claims.mode,
-        Some(grant),
-    )?;
+    let proof = sign_proof(transport, trust.device, &claims.sub, Some(grant))?;
     let client = redemption_client()
         .build()
         .map_err(|_| EndpointRedemptionUnavailable)?;
@@ -395,7 +351,12 @@ pub(super) async fn redeem(
     if std::time::Instant::now() >= attempt.deadline {
         return Err(InvalidGrant);
     }
-    Ok(Admission { operator: claims.sub, grant_id: claims.jti })
+    Ok(Admission {
+        operator: claims.sub,
+        grant_id: claims.jti,
+        #[cfg(windows)]
+        console,
+    })
 }
 
 #[cfg(test)]
@@ -449,10 +410,8 @@ mod tests {
         let (pk, sk) = sign::gen_keypair();
         let mut trust = Trust {
             device: Uuid::from_bytes([1; 16]),
-            certificate: [2; 32],
             management_key: pk,
             consent: true,
-            unattended: false,
         };
         let transport = Transport {
             binding: hmacsha256::Tag([3; 32]),
@@ -461,7 +420,8 @@ mod tests {
         let mut claims = json!({
             "iss": ISSUER, "aud": AUDIENCE, "sub": "lab-operator",
             "jti": Uuid::from_bytes([5; 16]).to_string(), "device": trust.device.to_string(),
-            "endpoint": hex::encode(trust.certificate), "endpoint_key": hex::encode(transport.endpoint_key),
+            "endpoint": hex::encode(sha256::hash(hex::encode(transport.endpoint_key).as_bytes()).as_ref()),
+            "endpoint_key": hex::encode(transport.endpoint_key),
             "mode": "consent", "connection": Uuid::from_bytes([3; 16]).to_string(),
             "handshake": hex::encode(transport.binding.as_ref()), "iat": 100u64, "exp": 120u64,
         });
@@ -508,12 +468,12 @@ mod tests {
         claims["mode"] = json!("unattended");
         assert_eq!(
             check_grant(&sign_grant(&claims), &transport, &trust, 105).map(drop),
-            Err(CorporateDenial::LocalPolicyDenied)
+            Err(CorporateDenial::InvalidGrant)
         );
-        trust.unattended = true;
+        trust.consent = false;
         assert_eq!(
-            check_grant(&sign_grant(&claims), &transport, &trust, 105).map(drop),
-            Ok(())
+            check_grant(&grant, &transport, &trust, 105).map(drop),
+            Err(CorporateDenial::LocalPolicyDenied)
         );
     }
 }

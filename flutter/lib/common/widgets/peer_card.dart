@@ -1,3 +1,5 @@
+import '../../yesdesk/enterprise/corporate_session.dart';
+
 import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -801,6 +803,7 @@ abstract class BasePeerCard extends StatelessWidget {
                       icon: const Icon(Icons.edit),
                       padding: EdgeInsets.zero,
                       onPressed: () {
+                        if (!corporateSession.isAdmin) return;
                         if (Navigator.canPop(context)) {
                           Navigator.pop(context);
                         }
@@ -811,7 +814,9 @@ abstract class BasePeerCard extends StatelessWidget {
             ],
           )),
       proc: () {
-        connectInPeerTab(context, peer, tab, isRDP: true);
+        if (corporateSession.isAdmin) {
+          connectInPeerTab(context, peer, tab, isRDP: true);
+        }
       },
       padding: menuPadding,
       dismissOnClicked: true,
@@ -1138,7 +1143,9 @@ class RecentPeerCard extends BasePeerCard {
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
-    if (isWindows && peer.platform == kPeerPlatformWindows) {
+    if (isWindows &&
+        corporateSession.isAdmin &&
+        peer.platform == kPeerPlatformWindows) {
       menuItems.add(_rdpAction(context, peer.id));
     }
     if (isWindows) {
@@ -1201,7 +1208,9 @@ class FavoritePeerCard extends BasePeerCard {
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
-    if (isWindows && peer.platform == kPeerPlatformWindows) {
+    if (isWindows &&
+        corporateSession.isAdmin &&
+        peer.platform == kPeerPlatformWindows) {
       menuItems.add(_rdpAction(context, peer.id));
     }
     if (isWindows) {
@@ -1263,7 +1272,9 @@ class DiscoveredPeerCard extends BasePeerCard {
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
-    if (isWindows && peer.platform == kPeerPlatformWindows) {
+    if (isWindows &&
+        corporateSession.isAdmin &&
+        peer.platform == kPeerPlatformWindows) {
       menuItems.add(_rdpAction(context, peer.id));
     }
     menuItems.add(_wolAction(peer.id));
@@ -1320,7 +1331,9 @@ class AddressBookPeerCard extends BasePeerCard {
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
-    if (isWindows && peer.platform == kPeerPlatformWindows) {
+    if (isWindows &&
+        corporateSession.isAdmin &&
+        peer.platform == kPeerPlatformWindows) {
       menuItems.add(_rdpAction(context, peer.id));
     }
     if (isWindows) {
@@ -1477,7 +1490,9 @@ class MyGroupPeerCard extends BasePeerCard {
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
     }
-    if (isWindows && peer.platform == kPeerPlatformWindows) {
+    if (isWindows &&
+        corporateSession.isAdmin &&
+        peer.platform == kPeerPlatformWindows) {
       menuItems.add(_rdpAction(context, peer.id));
     }
     if (isWindows) {
@@ -1500,6 +1515,7 @@ class MyGroupPeerCard extends BasePeerCard {
 }
 
 void _rdpDialog(String id) async {
+  if (!corporateSession.isAdmin) return;
   final maxLength = bind.mainMaxEncryptLen();
   final port = await bind.mainGetPeerOption(id: id, key: 'rdp_port');
   final username = await bind.mainGetPeerOption(id: id, key: 'rdp_username');
@@ -1511,6 +1527,10 @@ void _rdpDialog(String id) async {
 
   gFFI.dialogManager.show((setState, close, context) {
     submit() async {
+      if (!corporateSession.isAdmin) {
+        close();
+        return;
+      }
       String port = portController.text.trim();
       String username = userController.text;
       String password = passwordController.text;

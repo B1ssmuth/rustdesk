@@ -3433,6 +3433,10 @@ impl Connection {
     }
 
     async fn admit_corporate(&mut self, admission: corporate_grant::Admission) -> bool {
+        #[cfg(windows)]
+        if !admission.console.still_current() {
+            return false;
+        }
         self.lr.my_id = format!("corporate:{}", admission.grant_id);
         self.corporate_grant_id = Some(admission.grant_id);
         if !self.corporate_desktop_available() {

@@ -1246,7 +1246,7 @@ pub(crate) fn request_corporate_console_consent(operator: &str, timeout: u32) ->
     }
     let session = CorporateConsoleConsent::current()?;
     let mut title: Vec<u16> = "YES Desk corporate access".encode_utf16().chain(Some(0)).collect();
-    let mut message: Vec<u16> = format!("Verified YES Desk operator: {operator}\nAllow this connection?")
+    let mut message: Vec<u16> = format!("Verified YES Desk operator: {operator}\nAllow this connection?\nYes — Allow. No — Decline.")
         .encode_utf16().chain(Some(0)).collect();
     let mut response = 0;
     let ok = unsafe {

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
@@ -37,7 +36,8 @@ class ManagedWorkspace extends StatefulWidget {
 class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   Timer? _search;
   int _offset = 0;
-  List<String> _ou = [];
+  String? _hotel;
+  String _statusFilter = 'all';
   String _sort = 'hostname';
   final _columns = {'user', 'status', 'id'};
   Map<String, dynamic>? _selected;
@@ -45,7 +45,7 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   Future<dynamic>? _connectionOptions;
   late Future<dynamic> _data;
   String? _notice;
-  bool _treeVisible = false;
+  bool _treeVisible = true;
   bool _launching = false;
   WorkspaceApi get request => widget.api ?? corporateSession.api;
   String t(String en, String ru) => SshStrings(widget.language).text(en, ru);
@@ -80,8 +80,8 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   void _load() {
     _data = request('/v2/workspace', query: {
       'q': widget.query.trim(),
-      // A global search spans all organizational units.
-      'ou': jsonEncode(widget.query.trim().isEmpty ? _ou : <String>[]),
+      if (_hotel case final String hotel) 'hotel': hotel,
+      'status': _statusFilter,
       'favorites': '${widget.favorites}',
       'sort': _sort,
       'offset': '$_offset',
@@ -92,9 +92,7 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
 
   String _status(Map<String, dynamic> row) {
     if (row['agent_registered'] != true) return t('No agent', 'Без агента');
-    final stamp = DateTime.tryParse(_value(row['last_heartbeat']));
-    final age = stamp == null ? null : DateTime.now().difference(stamp);
-    return age != null && !age.isNegative && age < const Duration(minutes: 2)
+    return row['online'] == true
         ? t('Online', 'В сети')
         : t('Offline', 'Не в сети');
   }
@@ -131,13 +129,71 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
     }
   }
 
+  Future<void> _assignHotel(Map<String, dynamic> row) async {
+    final source = row['device_id'] == null ||
+            row['manual_hotel_source'] == 'ad'
+        ? 'ad'
+        : 'device';
+    final id = source == 'ad' ? row['ad_id'] : row['device_id'];
+    if (id == null || !corporateSession.isAdmin) return;
+    var value = (row['manual_hotel'] ?? row['hotel'] ?? '') as String;
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text(t('Assign hotel', 'Привязка к отелю')),
+        content: TextFormField(
+          initialValue: value,
+          autofocus: true,
+          maxLength: 128,
+          decoration: InputDecoration(labelText: t('Hotel', 'Отель')),
+          onChanged: (input) => value = input,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: Text(t('Cancel', 'Отмена')),
+          ),
+          if (row['manual_hotel'] != null)
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, false),
+              child: Text(t('Clear assignment', 'Снять привязку')),
+            ),
+          FilledButton(
+            onPressed: () {
+              if (value.trim().isNotEmpty) Navigator.pop(dialog, true);
+            },
+            child: Text(t('Save', 'Сохранить')),
+          ),
+        ],
+      ),
+    );
+    if (save == null || !mounted || !corporateSession.isAdmin) return;
+    try {
+      await request('/v2/catalog/$source/$id/hotel', method: 'PUT', body: {
+        'hotel': save ? value.trim() : null,
+      });
+      if (mounted) {
+        setState(() {
+          _selected = null;
+          _load();
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _notice =
+            t('Hotel assignment failed.', 'Не удалось изменить привязку.'));
+      }
+    }
+  }
+
+  bool _matchesSelection(Map<String, dynamic> row) =>
+      _selected != null &&
+      _selected?['device_id'] == row['device_id'] &&
+      _selected?['ad_id'] == row['ad_id'];
+
   Widget _record(Map<String, dynamic> row) {
-    final selected = _selected;
-    final active = selected != null &&
-        selected['ad_id'] == row['ad_id'] &&
-        selected['device_id'] == row['device_id'];
     return ListTile(
-      selected: active,
+      selected: _matchesSelection(row),
       title: Text(_value(row['hostname']),
           maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
@@ -162,6 +218,9 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
 
   Widget _details(Map<String, dynamic> row) {
     final hardware = row['metadata'] as Map<String, dynamic>;
+    final users = row['windows_users'] as List?;
+    final displayUsers =
+        users?.isNotEmpty == true ? users!.join(', ') : _value(row['windows_user']);
     return DefaultTabController(
         length: 2,
         child: Column(
@@ -182,10 +241,20 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
                 child: TabBarView(children: [
               ListView(padding: const EdgeInsets.all(12), children: [
                 Text(_value(row['dns_name'])),
-                Text((row['ou_path'] as List).join(' / ')),
+                if ((row['ou_path'] as List).isNotEmpty)
+                  Text((row['ou_path'] as List).join(' / ')),
+                Text(_hotelName(row['hotel'] as String? ?? '')),
+                if (corporateSession.isAdmin)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => _assignHotel(row),
+                      child: Text(t('Assign hotel', 'Привязать к отелю')),
+                    ),
+                  ),
                 Text(_status(row)),
                 Text(
-                    '${t('Windows user', 'Пользователь Windows')} · ${_value(row['windows_user'])}'),
+                    '${t('Windows user', 'Пользователь Windows')} · $displayUsers'),
                 Text('YES Desk ID · ${_value(row['yesdesk_id'])}'),
                 Text(
                     '${t('Agent', 'Агент')} · ${_value(hardware['agent_version'])}'),
@@ -240,16 +309,15 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
         ));
   }
 
-  Future<void> _launch(String mode) async {
+  Future<void> _launch() async {
     final device = _selected?['device_id'];
     if (!isWindows || _launching || device is! String) return;
     setState(() => _launching = true);
     try {
       final options = await request('/v2/devices/$device/connection-options');
       if (!mounted || _selected?['device_id'] != device) return;
-      final policy = mode == 'consent' ? 'attended' : 'unattended';
       final launch = options['launch'];
-      if (options[policy]?['available'] != true ||
+      if (options['attended']?['available'] != true ||
           launch is! Map ||
           launch['device_id'] != device) {
         throw StateError('Corporate launch unavailable');
@@ -269,7 +337,7 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
           endpointKeyHex: launch['endpoint_key'] as String,
           managementUrl: credentials.managementUrl,
           operator: credentials.operator,
-          mode: mode,
+          mode: 'consent',
           accessToken: credentials.token);
       if (error.isNotEmpty) throw StateError('Corporate session unavailable');
       await Navigator.of(context).push<void>(MaterialPageRoute(
@@ -302,24 +370,14 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
                 final consent = isWindows &&
                     options is Map &&
                     options['attended']?['available'] == true;
-                final unattended = isWindows &&
-                    options is Map &&
-                    options['unattended']?['available'] == true;
                 return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       FilledButton(
-                          onPressed: consent && !_launching
-                              ? () => _launch('consent')
-                              : null,
-                          child: Text(t('Connect', 'Подключиться'))),
-                      if (unattended)
-                        OutlinedButton(
-                            onPressed:
-                                _launching ? null : () => _launch('unattended'),
-                            child: Text(t('Connect unattended',
-                                'Подключиться без подтверждения'))),
-                      if (!consent && !unattended)
+                          onPressed: consent && !_launching ? _launch : null,
+                          child: Text(t('Corporate connection',
+                              'Корпоративное подключение'))),
+                      if (!consent)
                         Text(t('Corporate connection is unavailable.',
                             'Корпоративное подключение недоступно.')),
                     ]);
@@ -328,35 +386,45 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
         ],
       );
 
-  Widget _tree(List paths) {
-    final unique = <String, List<String>>{};
-    for (final path in paths.cast<List>()) {
-      for (var depth = 1; depth <= path.length; depth++) {
-        final prefix = path.take(depth).cast<String>().toList();
-        unique[jsonEncode(prefix)] = prefix;
-      }
+  String _hotelName(String value) =>
+      value.isEmpty ? t('Unassigned', 'Без отеля') : value;
+
+  Widget _tree(List hotels) => ListView(children: [
+        ListTile(
+            title: Text(t('All hotels', 'Все отели')),
+            selected: _hotel == null,
+            onTap: () => _choose(null)),
+        for (final hotel in [...hotels.cast<String>(), ''])
+          ListTile(
+            title: Text(_hotelName(hotel)),
+            selected: _hotel == hotel,
+            onTap: () => _choose(hotel),
+          ),
+      ]);
+
+  void _choose(String? hotel) => setState(() {
+        _hotel = hotel;
+        _offset = 0;
+        _selected = null;
+        _load();
+      });
+
+  Widget _hotelComputers(List<Map<String, dynamic>> rows) {
+    final hotels = <String, List<Map<String, dynamic>>>{};
+    for (final row in rows) {
+      hotels.putIfAbsent(row['hotel'] as String? ?? '', () => []).add(row);
     }
     return ListView(children: [
-      ListTile(
-          title: Text(t('All departments', 'Все подразделения')),
-          selected: _ou.isEmpty,
-          onTap: () => _choose([])),
-      for (final entry in unique.entries)
-        ListTile(
-          contentPadding:
-              EdgeInsets.only(left: 10 + (entry.value.length - 1) * 14.0),
-          title: Text(entry.value.last),
-          selected: entry.key == jsonEncode(_ou),
-          onTap: () => _choose(entry.value),
+      for (final hotel in hotels.entries)
+        ExpansionTile(
+          key: PageStorageKey(hotel.key),
+          initiallyExpanded: true,
+          title: Text(_hotelName(hotel.key)),
+          childrenPadding: const EdgeInsetsDirectional.only(start: 16),
+          children: hotel.value.map(_record).toList(),
         ),
     ]);
   }
-
-  void _choose(List<String> units) => setState(() {
-        _ou = units;
-        _offset = 0;
-        _load();
-      });
 
   @override
   Widget build(BuildContext context) => FutureBuilder<dynamic>(
@@ -379,17 +447,36 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
           final data = snapshot.data as Map<String, dynamic>;
           final rows = (data['rows'] as List).cast<Map<String, dynamic>>();
           final sync = data['sync'] as Map<String, dynamic>?;
+          final hotels = data['hotels'] as List? ?? [];
           return Column(children: [
             Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
               IconButton(
                   icon: const Icon(Icons.account_tree_outlined),
-                  tooltip: t('Departments', 'Подразделения'),
+                  tooltip: t('Hotels', 'Отели'),
                   onPressed: () =>
                       setState(() => _treeVisible = !_treeVisible)),
               IconButton(
                   icon: const Icon(Icons.refresh),
                   tooltip: t('Refresh', 'Обновить'),
                   onPressed: () => setState(_load)),
+              DropdownButton<String>(
+                value: _statusFilter,
+                onChanged: (value) => setState(() {
+                  _statusFilter = value!;
+                  _offset = 0;
+                  _selected = null;
+                  _load();
+                }),
+                items: [
+                  for (final entry in {
+                    'all': t('All statuses', 'Все статусы'),
+                    'online': t('Online', 'В сети'),
+                    'offline': t('Offline', 'Не в сети'),
+                    'no_agent': t('No agent', 'Без агента'),
+                  }.entries)
+                    DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+                ],
+              ),
               PopupMenuButton<String>(
                   tooltip: t('Sort', 'Сортировка'),
                   icon: const Icon(Icons.sort),
@@ -429,8 +516,6 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
                     'AD · ${sync['result'] == 'ok' ? t('Synced', 'Синхронизировано') : t('Sync failed', 'Ошибка синхронизации')} · ${_value(sync['successful_at'])}'),
             ]),
             if (_notice != null) Text(_notice!),
-            if (_treeVisible)
-              SizedBox(height: 105, child: _tree(data['ou_paths'] as List)),
             Expanded(child: LayoutBuilder(builder: (context, bounds) {
               final list = rows.isEmpty
                   ? Center(
@@ -444,19 +529,34 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
                                   maxCrossAxisExtent: 300, mainAxisExtent: 90),
                           itemBuilder: (_, index) =>
                               Card(child: _record(rows[index])))
-                      : ListView.builder(
-                          itemCount: rows.length,
-                          itemBuilder: (_, index) => _record(rows[index]));
-              final selected = _selected;
-              if (selected == null) return list;
-              if (bounds.maxWidth >= 690)
+                      : _hotel == null
+                          ? _hotelComputers(rows)
+                          : ListView.builder(
+                              itemCount: rows.length,
+                              itemBuilder: (_, index) => _record(rows[index]));
+              final narrow = bounds.maxWidth < (_treeVisible ? 900 : 690);
+              final catalog = !_treeVisible
+                  ? list
+                  : narrow
+                      ? Column(children: [
+                          SizedBox(height: 110, child: _tree(hotels)),
+                          Expanded(child: list),
+                        ])
+                      : Row(children: [
+                          SizedBox(width: 180, child: _tree(hotels)),
+                          const VerticalDivider(width: 1),
+                          Expanded(child: list),
+                        ]);
+              final selected = rows.where((row) => _matchesSelection(row)).firstOrNull;
+              if (selected == null) return catalog;
+              if (!narrow)
                 return Row(children: [
-                  Expanded(child: list),
+                  Expanded(child: catalog),
                   const VerticalDivider(width: 1),
                   SizedBox(width: 315, child: _details(selected)),
                 ]);
               return Column(children: [
-                Expanded(child: list),
+                Expanded(child: catalog),
                 const Divider(height: 1),
                 Expanded(flex: 2, child: _details(selected)),
               ]);

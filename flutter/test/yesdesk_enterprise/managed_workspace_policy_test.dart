@@ -22,6 +22,7 @@ void main() {
                 {
                   'device_id': 'pilot',
                   'hostname': 'Pilot PC',
+                  'hotel': 'Test Hotel',
                   'agent_registered': true,
                   'metadata': <String, dynamic>{},
                   'ou_path': [],
@@ -29,7 +30,7 @@ void main() {
                   'favorite': false
                 },
               ],
-              'ou_paths': [],
+              'hotels': ['Test Hotel'],
               'has_next': false,
               'sync': null,
             },
@@ -43,10 +44,11 @@ void main() {
       },
     ))));
     await tester.pumpAndSettle();
+    expect(find.text('Test Hotel'), findsWidgets);
     await tester.tap(find.text('Pilot PC'));
     await tester.pumpAndSettle();
     expect(find.text('Corporate connection is unavailable.'), findsOneWidget);
-    final connect = find.widgetWithText(FilledButton, 'Connect');
+    final connect = find.widgetWithText(FilledButton, 'Corporate connection');
     expect(tester.widget<FilledButton>(connect).onPressed, isNull);
     expect(calls.where((call) => call.startsWith('POST ')), isEmpty);
   });

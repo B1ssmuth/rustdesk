@@ -8,6 +8,7 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/models/input_model.dart';
+import 'package:flutter_hbb/yesdesk/enterprise/corporate_session.dart';
 
 /// must keep the order
 // ignore: constant_identifier_names
@@ -334,6 +335,9 @@ class RustDeskMultiWindowManager {
     bool? forceRelay,
     String? connToken,
   }) async {
+    if (isRDP && !corporateSession.isAdmin) {
+      return MultiWindowCallResult(-1, null);
+    }
     return await newSession(
       WindowType.PortForward,
       kWindowEventNewPortForward,
