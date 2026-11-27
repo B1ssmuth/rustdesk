@@ -23,7 +23,7 @@ AUDIENCE = "yesdesk-corporate-endpoint"
 TOKEN_TYPE = "yesdesk-session-grant+jwt"
 LIFETIME = 30
 HEX_32 = r"^[0-9a-f]{64}$"
-Mode = Literal["consent", "unattended"]
+Mode = Literal["consent"]
 
 
 class EndpointProof(BaseModel):
@@ -68,16 +68,11 @@ def proof_bytes(purpose, device_id, proof, grant_hash=""):
     )).encode("ascii")
 
 
-def endpoint_key(db, device_id, fingerprint=None):
-    # The enrollment broker locks certificate rows before the device. Keep that order.
+def endpoint_key(db, device_id):
     return db.execute(
-        """SELECT k.public_key,k.certificate_fingerprint,k.agent_hash FROM corporate_endpoint_keys k
-           JOIN device_enrollment_certificates e ON e.fingerprint=k.certificate_fingerprint
-           WHERE e.device_id=%s AND e.enabled AND e.used_at IS NOT NULL
-             AND k.valid_until>clock_timestamp()
-             AND (%s::text IS NULL OR k.certificate_fingerprint=%s)
-           FOR SHARE OF e,k""",
-        (device_id, fingerprint, fingerprint),
+        """SELECT public_key,agent_hash FROM corporate_transport_keys
+           WHERE device_id=%s AND valid_until>clock_timestamp() FOR SHARE""",
+        (device_id,),
     ).fetchone()
 
 
@@ -95,12 +90,11 @@ def verify_proof(key, purpose, device_id, proof, grant_hash=""):
     return True
 
 
-def session_entitlement(db, username, device_id, mode, session_hash, agent_hash):
+def session_entitlement(db, username, device_id, session_hash, agent_hash):
     # Device lock protects the policy from concurrent edits. Other joined locks
     # serialize revocation of the account, session, or individual grant.
     return db.execute(
-        """SELECT floor(extract(epoch FROM s.expires_at))::bigint AS session_end,
-                  floor(extract(epoch FROM p.unattended_until))::bigint AS policy_end
+        """SELECT floor(extract(epoch FROM s.expires_at))::bigint AS session_end
            FROM local_accounts a JOIN local_sessions s USING(username)
            JOIN local_device_grants g USING(username) JOIN devices d ON d.id=g.device_id
            LEFT JOIN corporate_access_policy p ON p.device_id=d.id
@@ -108,15 +102,13 @@ def session_entitlement(db, username, device_id, mode, session_hash, agent_hash)
              AND s.expires_at>clock_timestamp() AND a.role IN ('admin','support')
              AND d.enabled AND d.windows_enrollment AND d.agent_hash=%s
              AND d.last_heartbeat>clock_timestamp()-interval '2 minutes'
-             AND CASE WHEN %s='unattended'
-                 THEN a.role='admin' AND p.unattended_until>clock_timestamp()
-                 ELSE COALESCE(p.attended,true) END
+             AND COALESCE(p.attended,true)
            FOR SHARE OF a,s,g,d""",
-        (username, device_id, session_hash, agent_hash, mode),
+        (username, device_id, session_hash, agent_hash),
     ).fetchone()
 
 
-def install_grant_routes(app, get_db, bearer, signer):
+def install_grant_routes(app, get_db, bearer, signer, pilot_device=None):
     Db = Annotated[psycopg.Connection, Depends(get_db)]
     Cred = Annotated[HTTPAuthorizationCredentials, Depends(bearer)]
     verifier = signer.public_key()
@@ -134,32 +126,33 @@ def install_grant_routes(app, get_db, bearer, signer):
         action = "session_grant_issue"
         if operator != proof.operator:
             deny(db, operator, action, device_id, "operator_mismatch")
+        if pilot_device is not None and device_id != pilot_device:
+            deny(db, operator, action, device_id, "outside_pilot")
         enrolled = endpoint_key(db, device_id)
         if not verify_proof(enrolled, "issue", device_id, proof):
             deny(db, operator, action, device_id, "endpoint_proof_denied")
         session_hash = local_session_hash(cred.credentials)
-        rights = session_entitlement(db, operator, device_id, proof.mode, session_hash, enrolled["agent_hash"])
+        rights = session_entitlement(db, operator, device_id, session_hash, enrolled["agent_hash"])
         if not rights:
             deny(db, operator, action, device_id, "entitlement_denied")
         now = int(time.time())
         expiry = min(now + LIFETIME, proof.timestamp + LIFETIME, rights["session_end"], user["expires_at"])
-        if proof.mode == "unattended":
-            expiry = min(expiry, rights["policy_end"])
         if expiry <= now:
             deny(db, operator, action, device_id, "expired_context")
         grant_id = uuid4()
-        fingerprint = enrolled["certificate_fingerprint"]
+        endpoint = bytes(enrolled["public_key"]).hex()
+        fingerprint = token_hash(endpoint)
         claims = {
             **claims_context(device_id, proof), "endpoint": fingerprint,
-            "endpoint_key": bytes(enrolled["public_key"]).hex(),
+            "endpoint_key": endpoint,
             "iss": ISSUER, "aud": AUDIENCE, "jti": str(grant_id), "iat": now, "exp": expiry,
         }
         grant = jwt.encode(claims, signer, algorithm="EdDSA", headers={"typ": TOKEN_TYPE})
         row = db.execute(
             """INSERT INTO corporate_session_grants
-                 (id,username,device_id,session_hash,certificate_fingerprint,connection_id,handshake,token_hash,expires_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id""",
-            (grant_id, operator, device_id, session_hash, fingerprint, proof.connection_id,
+                 (id,username,device_id,session_hash,connection_id,handshake,token_hash,expires_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id""",
+            (grant_id, operator, device_id, session_hash, proof.connection_id,
              proof.handshake, token_hash(grant), expiry),
         ).fetchone()
         if not row:
@@ -187,18 +180,20 @@ def install_grant_routes(app, get_db, bearer, signer):
             deny(db, "unverified", action, device_id, "invalid_signature_or_format")
         if any(claims[field] != expected for field, expected in context.items()):
             deny(db, claims["sub"], action, grant_id, "context_mismatch")
+        if pilot_device is not None and device_id != pilot_device:
+            deny(db, claims["sub"], action, grant_id, "outside_pilot")
         db.execute("SELECT pg_advisory_xact_lock(%s)", (SESSION_LOCK,))
         row = db.execute("SELECT * FROM corporate_session_grants WHERE id=%s FOR UPDATE", (grant_id,)).fetchone()
         digest = token_hash(proof.grant)
-        if (not row or row["revoked_at"] or row["consumed_at"] or
+        if (not row or row["certificate_fingerprint"] is not None or row["revoked_at"] or row["consumed_at"] or
                 not hmac.compare_digest(row["token_hash"], digest)):
             deny(db, claims["sub"], action, grant_id, "grant_unavailable")
-        enrolled = endpoint_key(db, device_id, row["certificate_fingerprint"])
+        enrolled = endpoint_key(db, device_id)
         if (not verify_proof(enrolled, "redeem", device_id, proof, digest) or
                 not hmac.compare_digest(bytes(enrolled["public_key"]).hex(), claims["endpoint_key"]) or
-                claims["endpoint"] != enrolled["certificate_fingerprint"]):
+                claims["endpoint"] != token_hash(claims["endpoint_key"])):
             deny(db, claims["sub"], action, grant_id, "endpoint_proof_denied")
-        if not session_entitlement(db, row["username"], device_id, proof.mode,
+        if not session_entitlement(db, row["username"], device_id,
                                    row["session_hash"], enrolled["agent_hash"]):
             deny(db, claims["sub"], action, grant_id, "entitlement_revoked")
         consumed = db.execute(

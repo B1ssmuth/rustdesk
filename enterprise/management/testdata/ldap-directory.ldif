@@ -1,0 +1,52 @@
+dn: ou=Workstations,dc=example,dc=test
+objectClass: organizationalUnit
+ou: Workstations
+
+dn: ou=North\, Campus,ou=Workstations,dc=example,dc=test
+objectClass: organizationalUnit
+ou: North, Campus
+
+dn: ou=Reception,ou=North\, Campus,ou=Workstations,dc=example,dc=test
+objectClass: organizationalUnit
+ou: Reception
+
+dn: ou=Annex,ou=North\, Campus,ou=Workstations,dc=example,dc=test
+objectClass: organizationalUnit
+ou: Annex
+
+dn: cn=NORTH01,ou=Reception,ou=North\, Campus,ou=Workstations,dc=example,dc=test
+objectClass: computer
+cn: NORTH01
+name: NORTH01
+objectCategory: computer
+objectGUID:: EDAgEEAwQFBgcICQoLDA0A==
+dNSHostName: NORTH01.Example.Test.
+
+dn: cn=ANNEX01,ou=Annex,ou=North\, Campus,ou=Workstations,dc=example,dc=test
+objectClass: computer
+cn: ANNEX01
+name: ANNEX01
+objectCategory: computer
+objectGUID:: ERERESIiMzNERFVVVVVVVQ==
+dNSHostName: annex01.example.test
+
+dn: cn=SPARE01,ou=Workstations,dc=example,dc=test
+objectClass: computer
+cn: SPARE01
+name: SPARE01
+objectCategory: computer
+objectGUID:: IiIiIjMzRERVVWZmZmZmZg==
+
+dn: cn=fixture-user,dc=example,dc=test
+objectClass: user
+cn: fixture-user
+sn: Worker
+objectCategory: person
+objectSid:: AQUAAAAAAAUVAAAADAAAAA0AAAAOAAAAZgAAAA==
+displayName: Fixture Worker
+
+dn: cn=reader,dc=example,dc=test
+objectClass: inetOrgPerson
+cn: reader
+sn: Directory reader
+userPassword: fixture-read-only

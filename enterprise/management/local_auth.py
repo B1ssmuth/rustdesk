@@ -19,7 +19,7 @@ from argon2.exceptions import VerificationError
 from cryptography.fernet import Fernet
 from fastapi import Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 import psycopg
 
 from settings import database_url
@@ -74,7 +74,12 @@ class Preference(BaseModel):
 class CorporatePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     attended: bool
-    unattended_until: AwareDatetime | None = None
+    unattended_until: None = None
+
+
+class HotelAssignment(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    hotel: str | None = Field(min_length=1, max_length=128)
 
 
 def key():
@@ -220,7 +225,7 @@ def limit_attempt(db, username):
     db.commit()
 
 
-def install_routes(app, get_db, bearer, pilot_identity):
+def install_routes(app, get_db, bearer, launch_identity):
     Db = Annotated[psycopg.Connection, Depends(get_db)]
     Cred = Annotated[HTTPAuthorizationCredentials, Depends(bearer)]
 
@@ -427,6 +432,7 @@ def install_routes(app, get_db, bearer, pilot_identity):
     @app.post("/v2/devices/{device_id}/revoke-agent")
     def revoke_agent(device_id: UUID, db: Db, user: Annotated[dict, Depends(mutation_admin)]):
         db.execute("UPDATE device_enrollment_certificates SET enabled=false WHERE device_id=%s", (device_id,))
+        db.execute("DELETE FROM corporate_transport_keys WHERE device_id=%s", (device_id,))
         row = db.execute(
             "UPDATE devices SET agent_hash=NULL,enrollment_hash=NULL,enrollment_until=NULL,last_heartbeat=NULL "
             "WHERE id=%s RETURNING id", (device_id,),
@@ -470,6 +476,8 @@ def install_routes(app, get_db, bearer, pilot_identity):
                   q: Annotated[str, Query(max_length=100)] = "",
                   ou: Annotated[str, Query(max_length=4096)] = "[]",
                   favorites: bool = False,
+                  hotel: Annotated[str | None, Query(max_length=128)] = None,
+                  status: Literal["all", "online", "offline", "no_agent"] = "all",
                   sort: Literal["hostname", "heartbeat"] = "hostname",
                   offset: Annotated[int, Query(ge=0)] = 0):
         try:
@@ -479,7 +487,7 @@ def install_routes(app, get_db, bearer, pilot_identity):
         except ValueError:
             raise HTTPException(422, "Invalid OU path") from None
         rows = db.execute(
-            """WITH a AS (SELECT *,count(*) OVER (PARTITION BY lower(dns_name)) AS candidates
+            """WITH a AS (SELECT *,count(*) OVER (PARTITION BY lower(rtrim(dns_name,'.'))) AS candidates
                           FROM ad_workstations),
                d AS (SELECT *,count(*) OVER (PARTITION BY lower(rtrim(dns_name,'.'))) AS candidates
                      FROM devices WHERE enabled),
@@ -488,40 +496,89 @@ def install_routes(app, get_db, bearer, pilot_identity):
                      COALESCE(d.hostname,a.hostname) AS hostname,
                      COALESCE(d.dns_name,a.dns_name) AS dns_name,
                      COALESCE(a.ou_path,'{}') AS ou_path,d.yesdesk_id,d.last_heartbeat,
+                     COALESCE(dm.hotel,am.hotel,a.hotel,'') AS hotel,
+                     COALESCE(dm.hotel,am.hotel) AS manual_hotel,
+                     CASE WHEN dm.hotel IS NOT NULL THEN 'device'
+                          WHEN am.hotel IS NOT NULL THEN 'ad' END AS manual_hotel_source,
                      d.agent_hash IS NOT NULL AS agent_registered,COALESCE(d.metadata,'{}') AS metadata,
-                     COALESCE(p.favorite,false) AS favorite,COALESCE(p.group_name,'') AS group_name,
-                     (SELECT w.username FROM windows_sessions w WHERE w.device_id=d.id
-                      ORDER BY w.current DESC,w.logon_at DESC LIMIT 1) AS windows_user
+                     d.agent_hash IS NOT NULL AND
+                         COALESCE(d.last_heartbeat > now()-interval '2 minutes', false) AS online,
+                     COALESCE(p.favorite,false) AS favorite, COALESCE(p.group_name,'') AS group_name,
+                     person.names[1] AS windows_user, COALESCE(person.names,'{}') AS windows_users
                   FROM a FULL OUTER JOIN d
-                    ON (CASE WHEN a.candidates=1 AND a.dns_name<>'' THEN lower(a.dns_name) END)
-                       = (CASE WHEN d.candidates=1 THEN lower(rtrim(d.dns_name,'.')) END)
+                    ON (CASE WHEN a.candidates=1 THEN lower(NULLIF(rtrim(a.dns_name,'.'),'')) END)
+                       = (CASE WHEN d.candidates=1 THEN lower(NULLIF(rtrim(d.dns_name,'.'),'')) END)
+                  LEFT JOIN catalog_hotel_overrides dm ON dm.source='device' AND dm.computer_id=d.id
+                  LEFT JOIN catalog_hotel_overrides am ON am.source='ad' AND am.computer_id=a.object_id
                   LEFT JOIN local_device_preferences p ON p.device_id=d.id AND p.username=%(username)s
+                  LEFT JOIN LATERAL (
+                     SELECT array_agg(COALESCE(u.display_name,w.username)
+                             ORDER BY (w.transport='console') DESC,w.logon_at DESC,w.session_id,w.user_sid) AS names
+                     FROM windows_sessions w LEFT JOIN ad_catalog_users u ON u.sid=w.user_sid
+                     WHERE w.device_id=d.id AND w.current AND w.state='active'
+                       AND d.agent_hash IS NOT NULL AND d.last_heartbeat > now()-interval '2 minutes'
+                  ) person ON true
                )
                SELECT * FROM projected
                WHERE (NOT %(favorites)s OR favorite)
                  AND (%(depth)s=0 OR ou_path[1:%(depth)s]=%(units)s::text[])
-                 AND (%(q)s='' OR strpos(lower(concat_ws(' ',hostname,dns_name,windows_user,
-                      yesdesk_id,metadata->'addresses',array_to_string(ou_path,' '))),lower(%(q)s))>0)
+                 AND (%(hotel)s::text IS NULL OR hotel=%(hotel)s)
+                 AND CASE %(status)s WHEN 'online' THEN online
+                       WHEN 'offline' THEN agent_registered AND NOT online
+                       WHEN 'no_agent' THEN NOT agent_registered ELSE true END
+                 AND (%(q)s='' OR strpos(lower(concat_ws(' ',hostname,dns_name,hotel,
+                      array_to_string(windows_users,' '),yesdesk_id,metadata->'addresses',
+                      array_to_string(ou_path,' '))),lower(%(q)s))>0)
                ORDER BY CASE WHEN %(sort)s='heartbeat' THEN last_heartbeat END DESC NULLS LAST,
                         lower(hostname),device_id,ad_id LIMIT 101 OFFSET %(offset)s""",
             dict(username=user["username"], q=q, favorites=favorites, units=units,
-                 depth=len(units), sort=sort, offset=offset),
+                 depth=len(units), hotel=hotel, status=status, sort=sort, offset=offset),
         ).fetchall()
         paths = db.execute(
             "SELECT ou_path FROM ad_organizational_units UNION SELECT ou_path FROM ad_workstations ORDER BY ou_path",
         ).fetchall()
+        hotels = db.execute(
+            """SELECT hotel FROM ad_workstations WHERE hotel<>''
+               UNION SELECT o.hotel FROM catalog_hotel_overrides o JOIN ad_workstations a
+                   ON o.source='ad' AND o.computer_id=a.object_id
+               UNION SELECT o.hotel FROM catalog_hotel_overrides o JOIN devices d
+                   ON o.source='device' AND o.computer_id=d.id AND d.enabled
+               ORDER BY hotel"""
+        ).fetchall()
         sync = db.execute("SELECT attempted_at,successful_at,result,computer_count FROM ad_sync_status").fetchone()
         return {"rows": rows[:100], "has_next": len(rows) > 100,
-                "ou_paths": [row["ou_path"] for row in paths], "sync": sync}
+                "ou_paths": [row["ou_path"] for row in paths],
+                "hotels": [row["hotel"] for row in hotels], "sync": sync}
+
+    @app.put("/v2/catalog/{source}/{computer_id}/hotel")
+    def assign_hotel(source: Literal["ad", "device"], computer_id: UUID, payload: HotelAssignment,
+                     db: Db, user: Annotated[dict, Depends(mutation_admin)]):
+        lookup = ("SELECT 1 FROM ad_workstations WHERE object_id=%s" if source == "ad" else
+                  "SELECT 1 FROM devices WHERE id=%s AND enabled")
+        if not db.execute(lookup, (computer_id,)).fetchone():
+            raise HTTPException(404, "Computer unavailable")
+        if payload.hotel is None:
+            db.execute("DELETE FROM catalog_hotel_overrides WHERE source=%s AND computer_id=%s",
+                       (source, computer_id))
+        else:
+            db.execute(
+                """INSERT INTO catalog_hotel_overrides (source,computer_id,hotel) VALUES (%s,%s,%s)
+                   ON CONFLICT (source,computer_id) DO UPDATE SET hotel=excluded.hotel""",
+                (source, computer_id, payload.hotel),
+            )
+        write_audit(db, user["username"], "assign_hotel", computer_id, source)
+        return {"hotel": payload.hotel}
 
     @app.get("/v2/devices/{device_id}/history")
     def history(device_id: UUID, db: Db, user: Annotated[dict, Depends(directory)]):
         write_audit(db, user["username"], "read_device_history", device_id, "allowed")
         native = db.execute(
-            """SELECT w.user_sid AS employee_sid,w.username,w.state AS kind,w.transport,
+            """SELECT w.user_sid AS employee_sid,COALESCE(u.display_name,w.username) AS username,
+                      w.state AS kind,w.transport,
                       w.logon_at AS observed_at,w.last_seen AS received_at,
                       w.current AND d.last_heartbeat > now()-interval '2 minutes' AS current
                FROM windows_sessions w JOIN devices d ON d.id=w.device_id
+               LEFT JOIN ad_catalog_users u ON u.sid=w.user_sid
                WHERE d.id=%s AND d.enabled AND d.agent_hash IS NOT NULL
                ORDER BY w.logon_at DESC,w.session_id LIMIT 100""", (device_id,),
         ).fetchall()
@@ -551,18 +608,18 @@ def install_routes(app, get_db, bearer, pilot_identity):
     def connection_policy(db, user, device_id):
         return db.execute(
             """SELECT COALESCE(p.attended, true) AS attended,
-                      COALESCE(p.unattended_until>now() AND %(admin)s,false) AS unattended
+                      false AS unattended
                FROM local_device_grants g JOIN devices d ON d.id=g.device_id
                LEFT JOIN corporate_access_policy p ON p.device_id=d.id
                WHERE g.username=%(username)s AND d.id=%(device)s AND d.enabled AND d.windows_enrollment
                  AND d.agent_hash IS NOT NULL AND d.last_heartbeat > now()-interval '2 minutes'""",
-            {"username": user["username"], "device": device_id, "admin": user["role"] == "admin"},
+            {"username": user["username"], "device": device_id},
         ).fetchone() or {"attended": False, "unattended": False}
 
     @app.get("/v2/devices/{device_id}/connection-options")
     def options(device_id: UUID, db: Db, user: Annotated[dict, Depends(directory)]):
         policy = connection_policy(db, user, device_id)
-        launch = pilot_identity(db, device_id) if any(policy.values()) else None
+        launch = launch_identity(db, device_id) if policy["attended"] else None
         return {
             "attended": {"eligible": policy["attended"], "available": bool(launch and policy["attended"])},
             "unattended": {"eligible": policy["unattended"], "available": bool(launch and policy["unattended"])},
@@ -572,10 +629,6 @@ def install_routes(app, get_db, bearer, pilot_identity):
     @app.put("/v2/devices/{device_id}/corporate-policy")
     def configure_policy(device_id: UUID, payload: CorporatePolicy, db: Db,
                          user: Annotated[dict, Depends(mutation_admin)]):
-        until = payload.unattended_until
-        now = datetime.now(timezone.utc)
-        if until and not now < until <= now + timedelta(days=30):
-            raise HTTPException(422, "Unattended approval must expire within 30 days")
         device = db.execute(
             "SELECT 1 FROM devices WHERE id=%s AND enabled AND windows_enrollment "
             "AND agent_hash IS NOT NULL FOR UPDATE",
@@ -589,10 +642,10 @@ def install_routes(app, get_db, bearer, pilot_identity):
             """INSERT INTO corporate_access_policy (device_id,attended,unattended_until) VALUES (%s,%s,%s)
                ON CONFLICT(device_id) DO UPDATE SET attended=excluded.attended,
                    unattended_until=excluded.unattended_until,updated_at=clock_timestamp()""",
-            (device_id, payload.attended, until),
+            (device_id, payload.attended, None),
         )
         write_audit(db, user["username"], "set_corporate_policy", device_id,
-                    f"attended:{payload.attended},unattended_until:{until.isoformat() if until else 'disabled'}")
+                    f"attended:{payload.attended}")
         return {"policy_stored": True, "endpoint_ready": False}
 
     @app.post("/v2/devices/{device_id}/connection", status_code=501)

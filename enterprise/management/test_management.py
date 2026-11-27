@@ -26,7 +26,7 @@ from ad_sync import update as sync_directory
 from local_auth import hash_password, local_session_hash, start_local_session, token_hash, totp_code
 from enrollment_broker import register
 from migrate import migrate
-from provision import apply_directory, issue_test_code
+from provision import apply_directory, issue_test_code, pin_transport
 from settings import database_url
 
 
@@ -112,21 +112,28 @@ class PostgresTests(unittest.TestCase):
             host = Ed25519PrivateKey.generate()
             device = UUID(self.device)
             operator = "grant-test-admin"
-            certificate = "c" * 64
-            agent = "a" * 64
+            agent_client = TestClient(create_app(None, None, None, {}, enrolled_agents=True))
             with psycopg.connect(database_url()) as db:
                 db.execute("DELETE FROM local_accounts WHERE username=%s", (operator,))
                 db.execute("INSERT INTO local_accounts (username,display_name,role,password_hash) "
                            "VALUES (%s,'Grant Test','admin','unusable')", (operator,))
                 db.execute("INSERT INTO local_device_grants VALUES (%s,%s)", (operator, device))
-                db.execute("UPDATE devices SET windows_enrollment=true,last_heartbeat=now() WHERE id=%s", (device,))
-                db.execute(
-                    "INSERT INTO device_enrollment_certificates(fingerprint,device_id,enrollment_until) "
-                    "VALUES (%s,%s,now()+interval '1 hour')", (certificate, device),
-                )
-                self.assertTrue(register(db, certificate, device, agent))
-                db.execute("INSERT INTO corporate_endpoint_keys VALUES (%s,%s,%s,now()+interval '1 hour')",
-                           (certificate, agent, host.public_key().public_bytes_raw()))
+                db.execute("UPDATE devices SET windows_enrollment=true WHERE id=%s", (device,))
+            enrolled = agent_client.post("/v2/agents/enroll", json={
+                "device_id": self.device, "enrollment_code": self.code,
+            })
+            self.assertEqual(enrolled.status_code, 200, enrolled.text)
+            agent = token_hash(enrolled.json()["agent_token"])
+            with psycopg.connect(database_url()) as db:
+                db.execute("UPDATE devices SET last_heartbeat=now() WHERE id=%s", (device,))
+                config = {"id": self.device, "dns_name": "WORKSTATION.EXAMPLE.TEST.",
+                          "yesdesk_id": "12345678", "endpoint_key": host.public_key().public_bytes_raw().hex(),
+                          "valid_until": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}
+                with self.assertRaisesRegex(ValueError, "matching registered"):
+                    pin_transport(db, {**config, "yesdesk_id": "87654321"})
+                pin_transport(db, config)
+                self.assertEqual(db.execute("SELECT agent_hash FROM corporate_transport_keys WHERE device_id=%s",
+                                            (device,)).fetchone(), (agent,))
 
             with psycopg.connect(database_url(), row_factory=dict_row) as db:
                 session = start_local_session(db, operator, renewable=True)
@@ -177,7 +184,10 @@ class PostgresTests(unittest.TestCase):
                 ("handshake", "f" * 64),
             ):
                 with self.subTest(field=field):
-                    self.assertEqual(redeem({**context, field: value}, grant).status_code, 403)
+                    expected = 422 if field == "mode" else 403
+                    self.assertEqual(redeem({**context, field: value}, grant).status_code, expected)
+            self.assertEqual(client.post(path, headers=auth, json=make_proof(
+                "issue", device, {**context, "mode": "unattended"})).status_code, 422)
             self.assertEqual(redeem(context, grant, uuid4()).status_code, 403)
             wrong_proof = {**make_proof("redeem", device, context, grant), "signature": "0" * 128, "grant": grant}
             self.assertEqual(client.post(path + "/redeem", json=wrong_proof).status_code, 403)
@@ -232,6 +242,14 @@ class PostgresTests(unittest.TestCase):
                 count = db.execute("SELECT count(*) FROM audit WHERE action='session_grant_redeem' AND outcome='consumed'")
                 self.assertEqual(count.fetchone(), (2,))
                 db.execute("UPDATE devices SET enabled=true WHERE id=%s", (device,))
+            context, grant = issue()
+            with psycopg.connect(database_url()) as db:
+                db.execute("UPDATE devices SET agent_hash=%s WHERE id=%s", ("b" * 64, device))
+            self.assertNotIn("launch", client.get(path.replace("session-grants", "connection-options"),
+                                                  headers=auth).json())
+            self.assertEqual(redeem(context, grant).status_code, 403)
+            with psycopg.connect(database_url()) as db:
+                db.execute("UPDATE devices SET agent_hash=%s WHERE id=%s", (agent, device))
             context, grant = issue()
             self.assertEqual(client.post("/v2/auth/logout", headers=refresh).status_code, 200)
             self.assertEqual(redeem(context, grant).status_code, 403)
@@ -507,19 +525,16 @@ class PostgresTests(unittest.TestCase):
         policy = client.put(path + "/corporate-policy", headers=authorization, json={
             "attended": False, "unattended_until": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
         })
+        self.assertEqual(policy.status_code, 422, policy.text)
+        policy = client.put(path + "/corporate-policy", headers=authorization, json={"attended": False})
         self.assertEqual(policy.status_code, 200, policy.text)
+        with psycopg.connect(database_url()) as db:
+            db.execute("UPDATE corporate_access_policy SET unattended_until=now()+interval '1 minute' WHERE device_id=%s",
+                       (machine,))
         options = client.get(path + "/connection-options", headers=authorization).json()
         self.assertEqual(options["attended"], {"eligible": False, "available": False})
-        self.assertEqual(options["unattended"], {"eligible": True, "available": False})
+        self.assertEqual(options["unattended"], {"eligible": False, "available": False})
         self.assertEqual(client.post(path + "/connection", headers=authorization).status_code, 403)
-        self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 501)
-        with psycopg.connect(database_url()) as db:
-            db.execute("DELETE FROM local_device_grants WHERE username='catalog-admin' AND device_id=%s", (machine,))
-        self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 403)
-        with psycopg.connect(database_url()) as db:
-            db.execute("INSERT INTO local_device_grants VALUES ('catalog-admin',%s)", (machine,))
-            db.execute("UPDATE corporate_access_policy SET unattended_until=now()-interval '1 minute' WHERE device_id=%s",
-                       (machine,))
         self.assertEqual(client.post(path + "/connection?mode=unattended", headers=authorization).status_code, 403)
         self.assertEqual(client.post("/v2/agents/inventory", headers=headers,
                                      json={**data, "sessions": None}).status_code, 200)
@@ -602,7 +617,7 @@ class PostgresTests(unittest.TestCase):
         with psycopg.connect(database_url()) as db:
             db.execute("TRUNCATE ad_workstations")
             db.execute("TRUNCATE ad_sync_status")
-            db.execute("TRUNCATE ad_organizational_units")
+            db.execute("TRUNCATE ad_organizational_units, ad_catalog_users, catalog_hotel_overrides")
             db.execute("INSERT INTO local_accounts(username,display_name,role,password_hash) "
                        "VALUES ('workspace-test','Workspace','admin','fixture')")
             db.execute("INSERT INTO local_sessions VALUES (%s,'workspace-test',now()+interval '1 minute')",
@@ -613,10 +628,11 @@ class PostgresTests(unittest.TestCase):
         self.assertIsNone(response.json()["sync"])
         self.assertEqual([row["device_id"] for row in response.json()["rows"]], [self.device])
         snapshot = [
-            (matched, "workstation.example.test", "MATCH", ["Workstations", "North"]),
-            (ad_only, "directory-only.example.test", "DIRECTORY", ["Workstations", "South"]),
+            (matched, "workstation.example.test", "MATCH", ["Workstations", "North", "Front Desk"], "North Hotel"),
+            (ad_only, "directory-only.example.test", "DIRECTORY", ["Workstations", "South"], "South Hotel"),
         ]
-        with patch("ad_sync.read_directory", return_value=(snapshot, [("Workstations", "Empty")])):
+        with patch("ad_sync.read_directory", return_value=(snapshot, [("Workstations", "Empty")],
+                                                           [(USER, "Ирина Тестова")])):
             self.assertEqual(sync_directory(), 0)
         with patch("ad_sync.read_directory", side_effect=ConnectionError):
             self.assertEqual(sync_directory(), 1)
@@ -630,6 +646,20 @@ class PostgresTests(unittest.TestCase):
             self.assertTrue(register(db, "a"*64, UUID(self.device), "f"*64))
             self.assertTrue(register(db, "a"*64, UUID(self.device), "f"*64))
             self.assertFalse(register(db, "a"*64, UUID(self.device), "e"*64))
+        self.assertEqual(client.get("/v2/workspace").status_code, 401)
+        with psycopg.connect(database_url()) as db:
+            db.execute("UPDATE devices SET last_heartbeat=now(),dns_name='WORKSTATION.example.test.' WHERE id=%s",
+                       (self.device,))
+            for number, sid, name, state in (
+                (1, USER, "TEST\\worker", "active"),
+                (2, ADMIN, "TEST\\support", "active"),
+                (3, "S-1-5-21-12-13-14-1000", "no-longer-current", "disconnected"),
+            ):
+                db.execute(
+                    """INSERT INTO windows_sessions (device_id,session_id,user_sid,username,logon_at,transport,state,current)
+                       VALUES (%s,%s,%s,%s,now(),'console',%s,true)""",
+                    (self.device, number, sid, name, state),
+                )
         merged = client.get("/v2/workspace", headers=headers).json()
         self.assertEqual(merged["sync"]["result"], "failed")
         self.assertIn(["Workstations", "Empty"], merged["ou_paths"])
@@ -641,6 +671,32 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(len(client.get("/v2/workspace?q=192.0.2.41", headers=headers).json()["rows"]), 1)
         self.assertEqual(len(client.get("/v2/workspace", headers=headers,
                               params={"ou": '["Workstations","South"]'}).json()["rows"]), 1)
+        self.assertEqual(merged["hotels"], ["North Hotel", "South Hotel"])
+        user_rows = client.get("/v2/workspace", headers=headers, params={"q": "ирина", "status": "online"}).json()["rows"]
+        self.assertEqual([row["device_id"] for row in user_rows], [self.device])
+        self.assertEqual(set(user_rows[0]["windows_users"]), {"Ирина Тестова", "TEST\\support"})
+        self.assertEqual(client.get("/v2/workspace?q=no-longer-current", headers=headers).json()["rows"], [])
+        no_agent = client.get("/v2/workspace", headers=headers, params={"hotel": "South Hotel", "status": "no_agent"})
+        self.assertEqual([row["ad_id"] for row in no_agent.json()["rows"]], [str(ad_only)])
+        assignment = f"/v2/catalog/ad/{ad_only}/hotel"
+        self.assertEqual(client.put(assignment, json={"hotel": "Manual Hotel"}).status_code, 401)
+        self.assertEqual(client.put(assignment, headers=headers, json={"hotel": "Manual Hotel"}).status_code, 200)
+        with patch("ad_sync.read_directory", return_value=(snapshot, [], [(USER, "Ирина Тестова")])):
+            self.assertEqual(sync_directory(), 0)
+        rows = client.get("/v2/workspace?q=Manual Hotel", headers=headers).json()["rows"]
+        self.assertEqual([(row["ad_id"], row["manual_hotel"]) for row in rows], [(str(ad_only), "Manual Hotel")])
+        self.assertEqual(client.put(assignment, headers=headers, json={"hotel": None}).status_code, 200)
+        self.assertEqual(client.get("/v2/workspace?q=South Hotel", headers=headers).json()["rows"][0]["ad_id"],
+                         str(ad_only))
+        # Conflicting DNS registrations must never attach AD identity to either row.
+        with psycopg.connect(database_url()) as db:
+            duplicate = uuid4()
+            db.execute("""INSERT INTO devices(id,computer_sid,hostname,dns_name,yesdesk_id)
+                          VALUES (%s, 'S-1-5-21-12-13-14-777','Other','workstation.example.test','87654321')""",
+                       (duplicate,))
+        rows = client.get("/v2/workspace?q=workstation", headers=headers).json()["rows"]
+        self.assertFalse(any(row["ad_id"] and row["device_id"] for row in rows))
+        self.assertIn(str(matched), {row["ad_id"] for row in rows})
         self.assertEqual(client.post(f"/v2/devices/{self.device}/revoke-agent", headers=headers).status_code, 200)
         with psycopg.connect(database_url()) as db:
             self.assertFalse(register(db, "a"*64, UUID(self.device), "f"*64))

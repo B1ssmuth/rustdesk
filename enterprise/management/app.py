@@ -162,8 +162,8 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
     bearer = HTTPBearer()
     Db = Annotated[psycopg.Connection, Depends(get_db)]
     Credential = Annotated[HTTPAuthorizationCredentials, Depends(bearer)]
-    def pilot_identity(db, device_id):
-        if corporate_signer is None or device_id != pilot_device:
+    def launch_identity(db, device_id):
+        if corporate_signer is None or (pilot_device is not None and device_id != pilot_device):
             return None
         enrolled = endpoint_key(db, device_id)
         if not enrolled:
@@ -174,11 +174,11 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
             return {"device_id": str(device_id), "yesdesk_id": device["yesdesk_id"],
                     "endpoint_key": bytes(enrolled["public_key"]).hex()}
 
-    install_routes(app, get_db, bearer, pilot_identity)
+    install_routes(app, get_db, bearer, launch_identity)
     if corporate_signer is not None:
         if not enrolled_agents:
             raise ValueError("Corporate grants require Windows agent enrollment")
-        install_grant_routes(app, get_db, bearer, corporate_signer)
+        install_grant_routes(app, get_db, bearer, corporate_signer, pilot_device)
 
     @app.middleware("http")
     async def private_response(request: Request, call_next):
@@ -254,13 +254,9 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
     @app.get("/health/ready")
     def ready(db: Db):
         if not db.execute(
-            "SELECT 1 FROM schema_migrations WHERE name = '009_corporate_access_policy.sql'"
+            "SELECT 1 FROM schema_migrations WHERE name = '011_sprint41.sql'"
         ).fetchone():
             raise HTTPException(503, "Database migration required")
-        if corporate_signer is not None and not db.execute(
-            "SELECT 1 FROM schema_migrations WHERE name = '010_corporate_session_grants.sql'"
-        ).fetchone():
-            raise HTTPException(503, "Corporate grants database migration required")
         return {"status": "ok"}
 
     @app.get("/v1/me", response_model=Profile)

@@ -1,0 +1,6 @@
+{
+  "hotels": [
+    {"ou_dn": "OU=North\\, Campus,OU=Workstations,DC=example,DC=test", "hotel": "North Hotel"},
+    {"ou_dn": "OU=Annex,OU=North\\, Campus,OU=Workstations,DC=example,DC=test", "hotel": "Annex Hotel"}
+  ]
+}
