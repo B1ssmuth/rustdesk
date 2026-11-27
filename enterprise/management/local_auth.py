@@ -5,6 +5,7 @@ import hmac
 import json
 from datetime import datetime, timedelta, timezone
 import os
+import re
 from pathlib import Path
 import secrets
 import sys
@@ -28,6 +29,10 @@ PASSWORDS = PasswordHasher()
 DUMMY_HASH = PASSWORDS.hash(secrets.token_urlsafe(32))
 HASH_SLOTS = threading.BoundedSemaphore(4)
 USERNAME = r"^[a-z0-9._-]{3,64}$"
+REFRESH_TOKEN = re.compile(r"lr_[A-Za-z0-9_-]{43}")
+ACCESS_TOKEN = re.compile(r"la_([0-9a-f]{64})\.[A-Za-z0-9_-]{43}")
+ACCESS_WINDOW = 15 * 60
+SESSION_LOCK = 8143025
 
 
 class Login(BaseModel):
@@ -124,18 +129,77 @@ def write_audit(db, username, action, target, outcome):
 
 
 def current_local(db, token):
-    if not token.startswith("ls_") or len(token) != 46:
+    access = ACCESS_TOKEN.fullmatch(token)
+    legacy = token.startswith("ls_") and len(token) == 46
+    if not access and not legacy:
         raise HTTPException(401, "Invalid session")
+    digest = token_hash(token)
     user = db.execute(
         """SELECT a.username,a.display_name,a.role,
-                  floor(extract(epoch FROM s.expires_at))::bigint AS expires_at
+                  floor(extract(epoch FROM t.expires_at))::bigint AS expires_at,
+                  floor(extract(epoch FROM s.expires_at))::bigint AS session_expires_at
            FROM local_accounts a JOIN local_sessions s USING(username)
-           WHERE s.token_hash=%s AND a.enabled AND s.expires_at > clock_timestamp()""",
-        (token_hash(token),),
+           JOIN local_sessions t USING(username)
+           WHERE s.token_hash=%s AND t.token_hash=%s AND a.enabled
+             AND LEAST(s.expires_at,t.expires_at) > clock_timestamp()""",
+        (access[1] if access else digest, digest),
     ).fetchone()
     if user is None:
         raise HTTPException(401, "Invalid session")
+    if legacy:
+        del user["session_expires_at"]
     return {**user, "organization": "YES Desk"}
+
+
+def local_session_hash(access_token):
+    access = ACCESS_TOKEN.fullmatch(access_token)
+    return access[1] if access else token_hash(access_token)
+
+
+def issue_access(db, username, refresh_token):
+    session_hash = token_hash(refresh_token)
+    anchor = db.execute(
+        """SELECT expires_at, floor(extract(epoch FROM clock_timestamp()))::bigint AS now
+           FROM local_sessions
+           WHERE token_hash=%s AND username=%s AND expires_at > clock_timestamp()
+           FOR SHARE""", (session_hash, username),
+    ).fetchone()
+    if anchor is None:
+        raise HTTPException(401, "Invalid session")
+
+    # Refresh retries and concurrent clients in the same interval reuse one
+    # short-lived access token. Previous intervals retain their original TTL.
+    window = anchor["now"] // ACCESS_WINDOW
+    proof = hmac.digest(refresh_token.encode(), f"yesdesk-access-v1:{window}".encode(), "sha256")
+    secret = base64.urlsafe_b64encode(proof).decode().rstrip("=")
+    access_token = f"la_{session_hash}.{secret}"
+    expires = datetime.fromtimestamp((window + 2) * ACCESS_WINDOW, timezone.utc)
+    db.execute(
+        """INSERT INTO local_sessions (token_hash,username,expires_at) VALUES (%s,%s,%s)
+           ON CONFLICT (token_hash) DO NOTHING""",
+        (token_hash(access_token), username, min(expires, anchor["expires_at"])),
+    )
+    return {"token": access_token, "profile": current_local(db, access_token)}
+
+
+def start_local_session(db, username, renewable):
+    """Issue a session after the login provider has verified identity and MFA policy.
+
+    The provider must hold and validate the enabled local account row in this
+    transaction. A future Kerberos provider can use the same session issuer
+    after verified principal mapping and the applicable step-up check.
+    """
+    db.execute("DELETE FROM local_sessions WHERE expires_at <= now()")
+    token = ("lr_" if renewable else "ls_") + secrets.token_urlsafe(32)
+    lifetime = timedelta(hours=12) if renewable else timedelta(minutes=30)
+    db.execute(
+        "INSERT INTO local_sessions VALUES (%s,%s,clock_timestamp()+%s)",
+        (token_hash(token), username, lifetime),
+    )
+    write_audit(db, username, "login", username, "allowed")
+    if renewable:
+        return {**issue_access(db, username, token), "refresh_token": token}
+    return {"token": token, "profile": current_local(db, token)}
 
 
 def limit_attempt(db, username):
@@ -175,7 +239,7 @@ def install_routes(app, get_db, bearer, pilot_identity):
 
     def mutation_admin(db: Db, cred: Cred):
         # Serialize mutations and revalidate the session after acquiring the lock.
-        db.execute("SELECT pg_advisory_xact_lock(8143025)")
+        db.execute("SELECT pg_advisory_xact_lock(%s)", (SESSION_LOCK,))
         return admin(current_local(db, cred.credentials))
 
     def target_account(db, username):
@@ -197,8 +261,7 @@ def install_routes(app, get_db, bearer, pilot_identity):
             db.commit()
             raise HTTPException(409, "At least one enabled administrator with MFA is required")
 
-    @app.post("/v2/auth/login")
-    def login(payload: Login, db: Db):
+    def password_login(payload, db, renewable):
         limit_attempt(db, payload.username)
         user = db.execute("SELECT * FROM local_accounts WHERE username=%s FOR UPDATE",
                           (payload.username,)).fetchone()
@@ -208,15 +271,36 @@ def install_routes(app, get_db, bearer, pilot_identity):
             if user["role"] in ("admin", "support"):
                 valid = consume_totp(db, user, payload.code.get_secret_value() if payload.code else None)
             if valid:
-                token = "ls_" + secrets.token_urlsafe(32)
-                db.execute("DELETE FROM local_sessions WHERE expires_at <= now()")
-                db.execute("INSERT INTO local_sessions VALUES (%s,%s,now()+interval '30 minutes')",
-                           (token_hash(token), payload.username))
-                write_audit(db, payload.username, "login", payload.username, "allowed")
-                return {"token": token, "profile": current_local(db, token)}
+                return start_local_session(db, payload.username, renewable)
         write_audit(db, payload.username, "login", payload.username, "denied")
         db.commit()
         raise HTTPException(401, "Invalid credentials")
+
+    @app.post("/v2/auth/login")
+    def login(payload: Login, db: Db):
+        return password_login(payload, db, renewable=False)
+
+    @app.post("/v2/auth/session")
+    def login_session(payload: Login, db: Db):
+        return password_login(payload, db, renewable=True)
+
+    @app.post("/v2/auth/refresh")
+    def refresh(db: Db, cred: Cred):
+        token = cred.credentials
+        if not REFRESH_TOKEN.fullmatch(token):
+            raise HTTPException(401, "Invalid session")
+        # Lock the account before touching the session, as password and MFA
+        # changes do. issue_access then rechecks the anchor in this transaction.
+        account = db.execute(
+            """SELECT a.username FROM local_accounts a
+               WHERE a.enabled AND a.username=(
+                   SELECT username FROM local_sessions
+                   WHERE token_hash=%s AND expires_at > clock_timestamp()
+               ) FOR SHARE""", (token_hash(token),),
+        ).fetchone()
+        if not account:
+            raise HTTPException(401, "Invalid session")
+        return issue_access(db, account["username"], token)
 
     @app.get("/v2/auth/me")
     def me(user: Annotated[dict, Depends(account)]):
@@ -224,8 +308,21 @@ def install_routes(app, get_db, bearer, pilot_identity):
 
     @app.post("/v2/auth/logout")
     def logout(db: Db, cred: Cred):
-        row = db.execute("DELETE FROM local_sessions WHERE token_hash=%s RETURNING username",
-                         (token_hash(cred.credentials),)).fetchone()
+        db.execute("SELECT pg_advisory_xact_lock(%s)", (SESSION_LOCK,))
+        token = cred.credentials
+        digest = token_hash(token)
+        access = ACCESS_TOKEN.fullmatch(token)
+        if access:
+            # An anchor ID is public in an access token. Prove possession of
+            # its access secret before deleting that anchor.
+            row = db.execute(
+                """DELETE FROM local_sessions s USING local_sessions t
+                   WHERE s.token_hash=%s AND t.token_hash=%s AND s.username=t.username
+                   RETURNING s.username""", (access[1], digest),
+            ).fetchone()
+        else:
+            row = db.execute("DELETE FROM local_sessions WHERE token_hash=%s RETURNING username",
+                             (digest,)).fetchone()
         if row:
             write_audit(db, row["username"], "logout", row["username"], "allowed")
         return {"status": "ok"}
@@ -528,7 +625,7 @@ def cli():
         if not args.device_id:
             parser.error("--device-id is required")
         with psycopg.connect(database_url()) as db:
-            db.execute("SELECT pg_advisory_xact_lock(8143025)")
+            db.execute("SELECT pg_advisory_xact_lock(%s)", (SESSION_LOCK,))
             if args.operation == "grant-device":
                 row = db.execute(
                     """INSERT INTO local_device_grants
@@ -552,7 +649,7 @@ def cli():
     secret = secrets.token_bytes(20)
     encrypted = key().encrypt(secret)
     with psycopg.connect(database_url()) as db:
-        db.execute("SELECT pg_advisory_xact_lock(8143025)")
+        db.execute("SELECT pg_advisory_xact_lock(%s)", (SESSION_LOCK,))
         if args.operation == "bootstrap":
             if db.execute("SELECT 1 FROM local_accounts WHERE role='admin'").fetchone():
                 parser.error("Administrator already provisioned")

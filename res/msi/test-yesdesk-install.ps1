@@ -17,6 +17,7 @@ function Invoke-YesDeskMsi([string] $Arguments) {
     return $process.ExitCode
 }
 
+. (Join-Path $PSScriptRoot '../../scripts/windows-build-verify.ps1')
 $msiFile = (Resolve-Path -LiteralPath $Msi).Path
 $portable = (Get-Item -LiteralPath $PortableExe).VersionInfo
 $installer = New-Object -ComObject WindowsInstaller.Installer
@@ -40,6 +41,8 @@ function Get-YesDeskMsiProperty([string] $Name) {
 }
 
 $productCode = Get-YesDeskMsiProperty 'ProductCode'
+$version = ((Get-YesDeskMsiProperty 'ProductVersion') -split '\.' | Select-Object -First 3) -join '.'
+Assert-YesDeskMsi $msiFile $version
 Assert-YesDesk (Test-Path -LiteralPath $msiFile) 'MSI artifact is missing.'
 Assert-YesDesk ($portable.ProductName -eq 'YES Desk') 'Portable EXE product name is incorrect.'
 Assert-YesDesk ((Get-YesDeskMsiProperty 'ProductName') -eq 'YES Desk') 'MSI product name is incorrect.'
@@ -55,6 +58,12 @@ $installerKey = 'HKLM:\SOFTWARE\YES Apart\YES Desk\Installer'
 $installDirectory = Join-Path $env:ProgramFiles 'YES Desk'
 $runner = Join-Path $installDirectory 'YES_Desk.exe'
 $serviceName = 'YES Desk'
+$agentExe = Join-Path $env:ProgramFiles 'YES Desk Agent\YesDeskAgent.exe'
+function Assert-AgentAbsent {
+    Assert-YesDesk (!(Get-Service 'YESDeskAgent' -ErrorAction SilentlyContinue) -and
+        !(Test-Path -LiteralPath $agentExe)) 'The client MSI installed the inventory agent.'
+}
+Assert-AgentAbsent
 Assert-YesDesk (!(Test-Path $legacyKey) -and !(Test-Path $installerKey) -and
     !(Test-Path $installDirectory) -and !(Get-Service $serviceName -ErrorAction SilentlyContinue)) 'The Windows runner has a previous installation.'
 
@@ -97,6 +106,7 @@ $installLog = Join-Path $temp 'install.log'
 try {
     $code = Invoke-YesDeskMsi "$installArgs /l*v `"$installLog`""
     Assert-YesDesk ($code -in 0, 3010) "MSI install returned $code. Log: $installLog"
+    Assert-AgentAbsent
     Assert-YesDesk (Test-Path -LiteralPath $runner) 'The native runner was not installed.'
     Assert-YesDesk ((Get-ChildItem -LiteralPath $installDirectory -File -Filter '*.exe').Count -eq 1) 'The install root contains duplicate runners.'
 
@@ -128,5 +138,6 @@ try {
 
 Assert-YesDesk (!(Test-Path $runner) -and !(Test-Path $installerKey) -and !(Test-Path $arpKey)) 'Uninstall left the executable or registration.'
 Assert-YesDesk (!(Get-Service $serviceName -ErrorAction SilentlyContinue)) 'Uninstall left the YES Desk service.'
+Assert-AgentAbsent
 Assert-InstallState $portableRunner 'installed=false current_exe_installed=false'
 Write-Host 'Portable payload, installed state, MSI metadata, legacy guard, SCM registration and uninstall passed.'

@@ -94,8 +94,8 @@ class _CorporateAccountState extends State<CorporateAccount> {
                 Text(t('Corporate sign-in is unconfigured.',
                     'Корпоративный вход не настроен.')),
               if (_logoutFailed)
-                Text(t('Signed out locally. Server revocation was unavailable.',
-                    'Локальный выход выполнен. Серверный отзыв недоступен.')),
+                Text(t('Could not complete sign-out.',
+                    'Не удалось полностью завершить выход.')),
               if (corporateSession.configured) ...[
                 TextField(
                     controller: _username,
@@ -158,7 +158,11 @@ class _CorporateAccountState extends State<CorporateAccount> {
                 _ => t('Employee', 'Сотрудник'),
               }),
               Text(t('Session expires', 'Сеанс действителен до') +
-                  ' ${DateTime.fromMillisecondsSinceEpoch((profile['expires_at'] as int) * 1000)}'),
+                  ' ${DateTime.fromMillisecondsSinceEpoch(((profile['session_expires_at'] ?? profile['expires_at']) as int) * 1000)}'),
+              if (corporateSession.persistenceFailed)
+                Text(t(
+                    'Windows could not save this session. Sign in again after restarting.',
+                    'Windows не сохранила сеанс. После перезапуска войдите снова.')),
               Wrap(
                 spacing: 8,
                 children: [

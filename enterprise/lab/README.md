@@ -1,5 +1,8 @@
 # Изолированный стенд YES Desk Sprint 3.8
 
+> История стенда Sprint 3.8. Сборка для текущей ветки описана в [инструкции Sprint 4.0](../SPRINT-4-WINDOWS.md).
+
+
 Две отдельные Windows x64 VM и одна Linux x64 VM работают на частном коммутаторе Hyper-V. На гостях отсутствуют шлюз по умолчанию и корпоративные DNS. Доставка файлов производится через консоль либо отдельный виртуальный носитель. Hyper-V описывает границы сети типа Private в [документации коммутаторов](https://learn.microsoft.com/windows-server/virtualization/hyper-v/get-started/create-a-virtual-switch-for-hyper-v-virtual-machines).
 
 | Узел | Имя ОС | Адрес |

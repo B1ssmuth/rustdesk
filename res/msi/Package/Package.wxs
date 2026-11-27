@@ -76,27 +76,6 @@
 
 		<MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" />
 
-		<?ifdef CorporateAgentSource?>
-		<Property Id="YESDESK_UPSTREAM_SERVICE">
-			<RegistrySearch Id="YesDeskUpstreamService" Root="HKLM" Bitness="always64"
-				Key="SYSTEM\CurrentControlSet\Services\RustDesk" Name="ImagePath" Type="raw" />
-		</Property>
-		<Property Id="YESDESK_AGENT_EXISTING">
-			<RegistrySearch Id="YesDeskCorporateAgentService" Root="HKLM" Bitness="always64"
-				Key="SYSTEM\CurrentControlSet\Services\YESDeskAgent" Name="ImagePath" Type="raw" />
-		</Property>
-		<Upgrade Id="4250C5DB-5E09-44AB-816C-4082BB30DEB6">
-			<UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" OnlyDetect="yes"
-				Property="YESDESK_STANDALONE_AGENT_MSI" />
-		</Upgrade>
-		<Launch Condition="Installed OR NOT YESDESK_UPSTREAM_SERVICE"
-			Message="An existing RustDesk service was found. Complete the local Enterprise migration preflight before replacing the transport service." />
-		<Launch Condition="Installed OR (NOT WIX_UPGRADE_DETECTED AND NOT YESDESK_AGENT_EXISTING AND NOT YESDESK_EXISTING_SERVICE AND NOT YESDESK_STANDALONE_AGENT_MSI)"
-			Message="An existing YES Desk installation or standalone agent was found. This package requires a verified service ownership migration." />
-		<Feature Id="CorporateAgent" Level="1" AllowAdvertise="no" AllowAbsent="no" Title="YES Desk Management Agent">
-			<ComponentRef Id="CorporateAgentService" />
-		</Feature>
-		<?else?>
 		<?ifdef YesDesk?>
 		<Property Id="YESDESK_UNIFIED_AGENT">
 			<RegistrySearch Id="YesDeskUnifiedAgentOwner" Root="HKLM" Bitness="always64"
@@ -104,7 +83,6 @@
 		</Property>
 		<Launch Condition="Installed OR NOT YESDESK_UNIFIED_AGENT"
 			Message="The installed YES Desk Agent is owned by a unified pilot package. Use the approved migration procedure." />
-		<?endif?>
 		<?endif?>
 
 		<Feature Id="App" Level="1" AllowAdvertise="no" Display="expand" Title="!(loc.F_App)" Description="!(loc.F_App_Desc)" AllowAbsent="no">

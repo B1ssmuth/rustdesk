@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../common.dart' show isWindows;
 import '../../desktop/pages/remote_page.dart';
@@ -259,11 +260,18 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
           0) {
         throw StateError('Close the existing session first');
       }
-      final session = corporateSession.prepareConnection(
+      final credentials = corporateSession.connectionCredentials;
+      final session = const Uuid().v4obj();
+      final error = bind.sessionAddCorporateSync(
+          sessionId: session,
+          id: peer,
           deviceId: device,
-          peerId: peer,
-          endpointKey: launch['endpoint_key'] as String,
-          mode: mode);
+          endpointKeyHex: launch['endpoint_key'] as String,
+          managementUrl: credentials.managementUrl,
+          operator: credentials.operator,
+          mode: mode,
+          accessToken: credentials.token);
+      if (error.isNotEmpty) throw StateError('Corporate session unavailable');
       await Navigator.of(context).push<void>(MaterialPageRoute(
           builder: (_) => RemotePage(
               id: peer,

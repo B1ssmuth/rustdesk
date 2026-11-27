@@ -15,7 +15,7 @@ import jwt
 from pydantic import BaseModel, ConfigDict, Field
 import psycopg
 
-from local_auth import USERNAME, current_local, token_hash, write_audit
+from local_auth import SESSION_LOCK, USERNAME, current_local, local_session_hash, token_hash, write_audit
 
 
 ISSUER = "yesdesk-management"
@@ -128,21 +128,21 @@ def install_grant_routes(app, get_db, bearer, signer):
 
     @app.post("/v2/devices/{device_id}/session-grants", status_code=201)
     def issue(device_id: UUID, proof: EndpointProof, db: Db, cred: Cred):
+        db.execute("SELECT pg_advisory_xact_lock(%s)", (SESSION_LOCK,))
         user = current_local(db, cred.credentials)
         operator = user["username"]
         action = "session_grant_issue"
         if operator != proof.operator:
             deny(db, operator, action, device_id, "operator_mismatch")
-        db.execute("SELECT pg_advisory_xact_lock(8143025)")
         enrolled = endpoint_key(db, device_id)
         if not verify_proof(enrolled, "issue", device_id, proof):
             deny(db, operator, action, device_id, "endpoint_proof_denied")
-        session_hash = token_hash(cred.credentials)
+        session_hash = local_session_hash(cred.credentials)
         rights = session_entitlement(db, operator, device_id, proof.mode, session_hash, enrolled["agent_hash"])
         if not rights:
             deny(db, operator, action, device_id, "entitlement_denied")
         now = int(time.time())
-        expiry = min(now + LIFETIME, proof.timestamp + LIFETIME, rights["session_end"])
+        expiry = min(now + LIFETIME, proof.timestamp + LIFETIME, rights["session_end"], user["expires_at"])
         if proof.mode == "unattended":
             expiry = min(expiry, rights["policy_end"])
         if expiry <= now:
@@ -187,7 +187,7 @@ def install_grant_routes(app, get_db, bearer, signer):
             deny(db, "unverified", action, device_id, "invalid_signature_or_format")
         if any(claims[field] != expected for field, expected in context.items()):
             deny(db, claims["sub"], action, grant_id, "context_mismatch")
-        db.execute("SELECT pg_advisory_xact_lock(8143025)")
+        db.execute("SELECT pg_advisory_xact_lock(%s)", (SESSION_LOCK,))
         row = db.execute("SELECT * FROM corporate_session_grants WHERE id=%s FOR UPDATE", (grant_id,)).fetchone()
         digest = token_hash(proof.grant)
         if (not row or row["revoked_at"] or row["consumed_at"] or
@@ -215,7 +215,7 @@ def install_grant_routes(app, get_db, bearer, signer):
 
     @app.delete("/v2/session-grants/{grant_id}", status_code=204, response_class=Response)
     def revoke(grant_id: UUID, db: Db, cred: Cred):
-        db.execute("SELECT pg_advisory_xact_lock(8143025)")
+        db.execute("SELECT pg_advisory_xact_lock(%s)", (SESSION_LOCK,))
         operator = current_local(db, cred.credentials)["username"]
         row = db.execute(
             """UPDATE corporate_session_grants SET revoked_at=clock_timestamp()

@@ -195,6 +195,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("The confirmation is not identical.", "Подтверждение не совпадает"),
         ("Permissions", "Разрешения"),
         ("Accept", "Принять"),
+        ("Allow", "Разрешить"),
         ("Dismiss", "Отклонить"),
         ("Disconnect", "Отключить"),
         ("Enable file copy and paste", "Разрешить копирование и вставку файлов"),

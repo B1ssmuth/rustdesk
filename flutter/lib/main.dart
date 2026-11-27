@@ -19,6 +19,7 @@ import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_hbb/yesdesk/enterprise/corporate_session.dart';
 import 'package:flutter_hbb/yesdesk/identity.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
@@ -147,6 +148,7 @@ void runMainApp(bool startService) async {
   }
   await Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);
   gFFI.userModel.refreshCurrentUser();
+  unawaited(corporateSession.restore());
   runApp(App());
 
   bool? alwaysOnTop;

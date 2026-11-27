@@ -1033,12 +1033,16 @@ class _CmControlPanel extends StatelessWidget {
         model.showElevation &&
         client.type_() == ClientType.remote;
     final showAccept = model.approveMode != 'password';
+    final allowColor = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFF177A42)
+        : YesDeskColors.light.online;
     return Column(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         Offstage(
           offstage: !showElevation || !showAccept,
-          child: buildButton(context, color: colors.online, onClick: () {
+          child: buildButton(context,
+              color: allowColor, foreground: Colors.white, onClick: () {
             handleAccept(context);
             handleElevate(context);
             windowManager.minimize();
@@ -1059,12 +1063,13 @@ class _CmControlPanel extends StatelessWidget {
                   children: [
                     buildButton(
                       context,
-                      color: colors.accent,
+                      color: allowColor,
+                      foreground: Colors.white,
                       onClick: () {
                         handleAccept(context);
                         windowManager.minimize();
                       },
-                      text: 'Accept',
+                      text: 'Allow',
                     ),
                   ],
                 ),
@@ -1073,9 +1078,10 @@ class _CmControlPanel extends StatelessWidget {
               child: buildButton(
                 context,
                 color: Colors.transparent,
-                border: Border.all(color: colors.outline),
+                border: Border.all(color: colors.error),
+                foreground: colors.error,
                 onClick: handleDisconnect,
-                text: 'Cancel',
+                text: 'Dismiss',
               ),
             ),
           ],
@@ -1086,6 +1092,7 @@ class _CmControlPanel extends StatelessWidget {
 
   Widget buildButton(BuildContext context,
       {required Color? color,
+      Color? foreground,
       GestureTapCallback? onClick,
       Widget? icon,
       BoxBorder? border,
@@ -1094,11 +1101,12 @@ class _CmControlPanel extends StatelessWidget {
       GestureTapDownCallback? onTapDown}) {
     assert(!(onClick == null && onTapDown == null));
     final colors = YesDeskColors.of(context);
-    final textColor = color == null || color == Colors.transparent
-        ? colors.text
-        : color.computeLuminance() > .179
-            ? Colors.black
-            : Colors.white;
+    final textColor = foreground ??
+        (color == null || color == Colors.transparent
+            ? colors.text
+            : color.computeLuminance() > .179
+                ? Colors.black
+                : Colors.white);
     final textWidget = Flexible(
       child: Text(
         translate(text),

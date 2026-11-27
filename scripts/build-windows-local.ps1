@@ -10,7 +10,6 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'Build')][switch] $Build,
     [Parameter(ParameterSetName = 'Build')][string] $ResumeRun,
     [Parameter(ParameterSetName = 'Build')][string] $EnterpriseConfig,
-    [Parameter(ParameterSetName = 'Build')][switch] $UnifiedEnterpriseMsi,
     [Parameter(Mandatory, ParameterSetName = 'Bridge')][switch] $BridgeOnly
 )
 
@@ -184,18 +183,6 @@ with tarfile.open(archive) as snapshot:
             $commit, 'res/msi', 'res/icon.ico')
         Invoke-BuildCommand (Find-Application 'tar.exe') @('-xf', $msiArchive, '-C', $packaging)
         $msiDir = Join-Path $packaging 'res\msi'
-        $agentArguments = @()
-        if ($UnifiedEnterpriseMsi) {
-            $agentOutput = Join-Path $packaging 'agent'
-            $dotnet = Join-Path $layout.Dotnet 'dotnet.exe'
-            $agentProject = Join-Path $source 'enterprise\agent\WindowsAgent\WindowsAgent.csproj'
-            Invoke-BuildCommand $dotnet @('publish', $agentProject, '-c', 'Release', '-o', $agentOutput,
-                '-p:RestoreSources=https://api.nuget.org/v3/index.json')
-            $agentExe = Join-Path $agentOutput 'YesDeskAgent.exe'
-            Assert-X64Executable $agentExe
-            Invoke-BuildCommand $agentExe @('--version')
-            $agentArguments = @("-p:CorporateAgentSource=$agentExe")
-        }
         Push-Location -LiteralPath $msiDir
         try {
             Invoke-BuildCommand $layout.Python @('preprocess.py', '--yesdesk', '-d', '../../rustdesk',
@@ -204,26 +191,12 @@ with tarfile.open(archive) as snapshot:
             Restore-MsiPackages $layout $vs $msiDir
             $msiArguments = @('msi.sln', '-p:Configuration=Release', '-p:Platform=x64',
                 '-p:TargetVersion=Windows10', '-nr:false', "-bl:$packaging\msbuild.binlog")
-            Invoke-BuildCommand $vs.MSBuild ($msiArguments + $agentArguments)
+            Invoke-BuildCommand $vs.MSBuild $msiArguments
         } finally {
             Pop-Location
         }
         $msi = Join-Path $msiDir 'Package\bin\x64\Release\en-us\Package.msi'
         Assert-YesDeskMsi $msi $version
-        if ($UnifiedEnterpriseMsi) {
-            Assert-CorporateMsi $msi
-            if (!(Test-PinnedHash 'Cargo.lock' $cargoLockHash) -or !(Test-PinnedHash 'flutter\pubspec.lock' $pubLockHash)) {
-                throw 'Cargo.lock or pubspec.lock changed during the build.'
-            }
-            New-Item -ItemType Directory -Path $output | Out-Null
-            $name = "YES_Desk-Enterprise-$version-x86_64.msi"
-            $artifact = Join-Path $output $name
-            Copy-Item -LiteralPath $msi -Destination $artifact
-            "$((Get-FileHash -LiteralPath $artifact).Hash.ToLowerInvariant())  $name" |
-                Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding ascii
-            Write-Host "Verified unified Windows x64 MSI: $artifact"
-            return
-        }
         Copy-Item -LiteralPath $msi -Destination (Join-Path $dist 'YES_Desk.msi')
 
         # Reproduce the portable-only manifest edit in the snapshot.

@@ -158,6 +158,31 @@ button.elevate>span>span>span {
     vertical-align: middle;
 }
 
+button#accept, button#elevate_accept {
+    background: #136237;
+    border-color: #136237;
+    color: #fff;
+}
+
+html.darktheme button#accept, html.darktheme button#elevate_accept {
+    background: #177a42;
+    border-color: #177a42;
+}
+
+button#accept:active, button#elevate_accept:active {
+    opacity: 0.8;
+}
+
+button#dismiss {
+    color: #a72727;
+    border-color: #a72727;
+}
+
+html.darktheme button#dismiss {
+    color: #ffa0a0;
+    border-color: #ffa0a0;
+}
+
 button#disconnect {
     background: color(blood-red);
     border: none;

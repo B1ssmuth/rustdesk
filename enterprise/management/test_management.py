@@ -19,10 +19,11 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 import jwt
 import psycopg
+from psycopg.rows import dict_row
 
 from app import create_app, production_app, role_for
 from ad_sync import update as sync_directory
-from local_auth import hash_password, token_hash, totp_code
+from local_auth import hash_password, local_session_hash, start_local_session, token_hash, totp_code
 from enrollment_broker import register
 from migrate import migrate
 from provision import apply_directory, issue_test_code
@@ -110,7 +111,6 @@ class PostgresTests(unittest.TestCase):
 
             host = Ed25519PrivateKey.generate()
             device = UUID(self.device)
-            session = "ls_" + "k" * 43
             operator = "grant-test-admin"
             certificate = "c" * 64
             agent = "a" * 64
@@ -118,8 +118,6 @@ class PostgresTests(unittest.TestCase):
                 db.execute("DELETE FROM local_accounts WHERE username=%s", (operator,))
                 db.execute("INSERT INTO local_accounts (username,display_name,role,password_hash) "
                            "VALUES (%s,'Grant Test','admin','unusable')", (operator,))
-                db.execute("INSERT INTO local_sessions VALUES (%s,%s,now()+interval '10 minutes')",
-                           (token_hash(session), operator))
                 db.execute("INSERT INTO local_device_grants VALUES (%s,%s)", (operator, device))
                 db.execute("UPDATE devices SET windows_enrollment=true,last_heartbeat=now() WHERE id=%s", (device,))
                 db.execute(
@@ -130,8 +128,12 @@ class PostgresTests(unittest.TestCase):
                 db.execute("INSERT INTO corporate_endpoint_keys VALUES (%s,%s,%s,now()+interval '1 hour')",
                            (certificate, agent, host.public_key().public_bytes_raw()))
 
+            with psycopg.connect(database_url(), row_factory=dict_row) as db:
+                session = start_local_session(db, operator, renewable=True)
+
             path = f"/v2/devices/{device}/session-grants"
-            auth = {"Authorization": "Bearer " + session}
+            auth = {"Authorization": "Bearer " + session["token"]}
+            refresh = {"Authorization": "Bearer " + session["refresh_token"]}
 
             def make_proof(purpose, bound_device, context, grant=""):
                 timestamp = int(time.time())
@@ -179,8 +181,12 @@ class PostgresTests(unittest.TestCase):
             self.assertEqual(redeem(context, grant, uuid4()).status_code, 403)
             wrong_proof = {**make_proof("redeem", device, context, grant), "signature": "0" * 128, "grant": grant}
             self.assertEqual(client.post(path + "/redeem", json=wrong_proof).status_code, 403)
+            with patch("local_auth.ACCESS_WINDOW", 800):
+                renewed = client.post("/v2/auth/refresh", headers=refresh).json()["token"]
+            self.assertNotEqual(renewed, session["token"])
             self.assertEqual(redeem(context, grant).status_code, 204)
             self.assertEqual(redeem(context, grant).status_code, 403)
+            auth["Authorization"] = "Bearer " + renewed
             self.assertEqual(client.post(path, headers=auth, json=make_proof("issue", device, context)).status_code, 409)
 
             context, grant = issue()
@@ -225,6 +231,10 @@ class PostgresTests(unittest.TestCase):
             with psycopg.connect(database_url()) as db:
                 count = db.execute("SELECT count(*) FROM audit WHERE action='session_grant_redeem' AND outcome='consumed'")
                 self.assertEqual(count.fetchone(), (2,))
+                db.execute("UPDATE devices SET enabled=true WHERE id=%s", (device,))
+            context, grant = issue()
+            self.assertEqual(client.post("/v2/auth/logout", headers=refresh).status_code, 200)
+            self.assertEqual(redeem(context, grant).status_code, 403)
 
     def test_rbac_rechecks_groups_and_rejects_wrong_token(self):
         self.assertEqual(self.client.get("/health/ready").status_code, 200)
@@ -333,9 +343,12 @@ class PostgresTests(unittest.TestCase):
                 self.assertEqual(client.get("/v2/auth/me", headers=headers).status_code, 401)
                 self.assertEqual(client.put("/v2/accounts/local-user", headers=adm,
                                             json={"enabled": True}).status_code, 200)
-                headers = {"Authorization": "Bearer " + client.post("/v2/auth/login", json=user).json()["token"]}
+                renewable = client.post("/v2/auth/session", json=user).json()
+                headers = {"Authorization": "Bearer " + renewable["token"]}
+                saved = {"Authorization": "Bearer " + renewable["refresh_token"]}
                 self.assertEqual(client.post("/v2/accounts/local-user/revoke-sessions", headers=adm).status_code, 200)
                 self.assertEqual(client.get("/v2/auth/me", headers=headers).status_code, 401)
+                self.assertEqual(client.post("/v2/auth/refresh", headers=saved).status_code, 401)
                 headers = {"Authorization": "Bearer " + client.post("/v2/auth/login", json=user).json()["token"]}
                 self.assertEqual(client.patch("/v2/accounts/local-user", headers=adm,
                                               json={"display_name": "Help Desk", "role": "support"}).status_code, 200)
@@ -364,6 +377,80 @@ class PostgresTests(unittest.TestCase):
                                                  "password": "bad"}).status_code, 401)
                 self.assertEqual(client.post("/v2/auth/login", json={"username": "missing",
                                              "password": "bad"}).status_code, 429)
+
+    def test_renewable_session_mfa_lifetimes_and_revocation(self):
+        client = TestClient(create_app(None, None, None, {}))
+        secret = b"renewable-test-totp"
+        key = Fernet.generate_key()
+        username = "renewable-admin"
+        credentials = dict(username=username, password="renewable test password")
+
+        def bearer(token):
+            return {"Authorization": f"Bearer {token}"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            key_file = Path(directory) / "mfa"
+            key_file.write_bytes(key)
+            with patch.dict(os.environ, {"YESDESK_MFA_KEY_FILE": str(key_file)}):
+                with psycopg.connect(database_url()) as db:
+                    db.execute("DELETE FROM local_accounts WHERE username=%s", (username,))
+                    db.execute("INSERT INTO local_accounts(username,display_name,role,password_hash,totp_secret) "
+                               "VALUES (%s,'Renewable Admin','admin',%s,%s)",
+                               (username, hash_password(credentials["password"]), Fernet(key).encrypt(secret)))
+                self.assertEqual(client.post("/v2/auth/session", json=credentials).status_code, 401)
+                now = int(time.time())
+                login = {**credentials, "code": totp_code(secret, now // 30)}
+                with patch("local_auth.time.time", return_value=now):
+                    result = client.post("/v2/auth/session", json=login)
+                    self.assertEqual(result.status_code, 200, result.text)
+                    self.assertEqual(client.post("/v2/auth/session", json=login).status_code, 401)
+                initial = result.json()
+
+        access, refresh = initial["token"], initial["refresh_token"]
+        profile = initial["profile"]
+        self.assertGreater(profile["session_expires_at"] - now, 43190)
+        self.assertLessEqual(profile["session_expires_at"] - now, 43210)
+        self.assertLessEqual(profile["expires_at"] - now, 1800)
+        self.assertEqual(local_session_hash(access), token_hash(refresh))
+        self.assertEqual(client.get("/v2/accounts", headers=bearer(access)).status_code, 200)
+        self.assertEqual(client.get("/v2/accounts", headers=bearer(refresh)).status_code, 401)
+        self.assertEqual(client.post("/v2/auth/refresh", headers=bearer(access)).status_code, 401)
+        forged = access[:-43] + "a" * 43
+        self.assertEqual(client.post("/v2/auth/logout", headers=bearer(forged)).status_code, 200)
+        self.assertEqual(client.get("/v2/auth/me", headers=bearer(access)).status_code, 200)
+
+        with psycopg.connect(database_url()) as db:
+            db.execute("UPDATE local_sessions SET expires_at=now()-interval '1 second' WHERE token_hash=%s",
+                       (token_hash(access),))
+        self.assertEqual(client.get("/v2/auth/me", headers=bearer(access)).status_code, 401)
+        gate = Barrier(2, timeout=10)
+
+        def refresh_in_parallel():
+            with TestClient(client.app) as parallel_client:
+                gate.wait()
+                return parallel_client.post("/v2/auth/refresh", headers=bearer(refresh))
+
+        with patch("local_auth.ACCESS_WINDOW", 800), ThreadPoolExecutor(max_workers=2) as pool:
+            jobs = [pool.submit(refresh_in_parallel) for _ in range(2)]
+            replies = [job.result(timeout=20) for job in jobs]
+        for reply in replies:
+            self.assertEqual(reply.status_code, 200, reply.text)
+            self.assertEqual(reply.json()["profile"]["session_expires_at"], profile["session_expires_at"])
+        renewed = replies[0].json()["token"]
+        self.assertEqual(renewed, replies[1].json()["token"])
+        self.assertNotEqual(renewed, access)
+
+        with psycopg.connect(database_url()) as db:
+            db.execute("UPDATE local_sessions SET expires_at=now()-interval '1 second' WHERE token_hash=%s",
+                       (token_hash(refresh),))
+        self.assertEqual(client.post("/v2/auth/refresh", headers=bearer(refresh)).status_code, 401)
+        self.assertEqual(client.get("/v2/auth/me", headers=bearer(renewed)).status_code, 401)
+
+        with psycopg.connect(database_url(), row_factory=dict_row) as db:
+            second = start_local_session(db, username, renewable=True)
+        self.assertEqual(client.post("/v2/auth/logout", headers=bearer(second["token"])).status_code, 200)
+        self.assertEqual(client.post("/v2/auth/refresh", headers=bearer(second["refresh_token"])).status_code, 401)
+        self.assertEqual(client.get("/v2/auth/me", headers=bearer(second["token"])).status_code, 401)
 
     def test_windows_enrollment_inventory_and_device_binding(self):
         client = TestClient(create_app(None, None, None, {}, enrolled_agents=True))

@@ -55,6 +55,13 @@ function Assert-YesDeskMsi([string] $Path, [string] $Version) {
             if (@($files -eq 'YES_Desk.exe').Count -ne 1 -or $files -match '\.msi$|^(rustdesk|YES Desk)\.exe$') {
                 throw 'MSI file table has an unexpected runner or a nested MSI.'
             }
+            $services = @(Get-MsiStrings $database 'SELECT `Name` FROM `ServiceInstall`')
+            $controls = @(Get-MsiStrings $database 'SELECT `Name` FROM `ServiceControl`')
+            if ($services.Count -ne 1 -or $services[0] -ne 'YES Desk' -or
+                $controls.Count -ne 1 -or $controls[0] -ne 'YES Desk' -or
+                $files -contains 'YesDeskAgent.exe') {
+                throw 'The client MSI must own only the YES Desk transport service and contain no agent.'
+            }
             $summary = $database.GetType().InvokeMember('SummaryInformation', 'GetProperty', $null, $database, @(0))
             try {
                 $template = $summary.GetType().InvokeMember('Property', 'GetProperty', $null, $summary, @(7))
@@ -62,31 +69,6 @@ function Assert-YesDeskMsi([string] $Path, [string] $Version) {
             } finally {
                 [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($summary)
             }
-        } finally {
-            [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
-        }
-    } finally {
-        [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer)
-    }
-}
-
-function Assert-CorporateMsi([string] $Path) {
-    $installer = New-Object -ComObject WindowsInstaller.Installer
-    try {
-        $database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($Path, 0))
-        try {
-            $services = @(Get-MsiStrings $database 'SELECT `Name` FROM `ServiceInstall`')
-            $controls = @(Get-MsiStrings $database 'SELECT `Name` FROM `ServiceControl`')
-            $files = @(Get-MsiStrings $database 'SELECT `FileName` FROM `File`' |
-                ForEach-Object { ($_ -split '\|')[-1] })
-            $features = @(Get-MsiStrings $database 'SELECT `Feature` FROM `Feature`')
-            if ($services.Count -ne 2 -or $controls.Count -ne 2 -or
-                'YES Desk' -notin $services -or 'YESDeskAgent' -notin $services -or
-                'YES Desk' -notin $controls -or 'YESDeskAgent' -notin $controls -or
-                'CorporateAgent' -notin $features -or @($files -eq 'YesDeskAgent.exe').Count -ne 1) {
-                throw 'Unified MSI must contain both service definitions and exactly one Windows Agent binary.'
-            }
-            Write-Host 'Verified YES Desk and YESDeskAgent services in unified MSI.'
         } finally {
             [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
         }

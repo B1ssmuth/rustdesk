@@ -561,11 +561,12 @@ if __name__ == "__main__":
             parser.error(f"Missing {executable} in the MSI staging directory")
         if any(
             file.is_file() and (
-                file.name.lower() in {"rustdesk.exe", "yes desk.exe"} or file.suffix.lower() == ".msi"
+                file.name.lower() in {"rustdesk.exe", "yes desk.exe", "yesdeskagent.exe"}
+                or file.suffix.lower() == ".msi"
             )
             for file in dist_dir.rglob("*")
         ):
-            parser.error("The MSI payload contains a legacy runner or another MSI")
+            parser.error("The MSI payload contains a legacy runner, the inventory agent or another MSI")
 
     if not prepare_resources():
         sys.exit(-1)

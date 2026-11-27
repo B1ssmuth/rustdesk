@@ -4,7 +4,6 @@
     </IncludeSearchPaths>
     <Configurations>Release</Configurations>
     <Platforms>x64</Platforms>
-    <DefineConstants Condition="'$(CorporateAgentSource)' != ''">$(DefineConstants);CorporateAgentSource=$(CorporateAgentSource)</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="Includes.wxi" />
