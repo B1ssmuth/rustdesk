@@ -32,7 +32,7 @@ use video_service::VideoSource;
 
 use crate::ipc::Data;
 
-fn corporate_channel_binding(
+pub(crate) fn corporate_channel_binding(
     key: &secretbox::Key,
     endpoint_ephemeral: &box_::PublicKey,
 ) -> hmacsha256::Tag {

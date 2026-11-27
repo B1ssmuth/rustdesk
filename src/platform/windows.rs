@@ -936,7 +936,19 @@ pub fn desktop_changed() -> bool {
     unsafe { inputDesktopSelected() == FALSE }
 }
 
+thread_local! {
+    static CORPORATE_INPUT_DESKTOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn restrict_corporate_input() -> bool {
+    CORPORATE_INPUT_DESKTOP.with(|restricted| restricted.set(true));
+    corporate_user_desktop() && unsafe { inputDesktopSelected() == TRUE }
+}
+
 pub fn try_change_desktop() -> bool {
+    if CORPORATE_INPUT_DESKTOP.with(|restricted| restricted.get()) {
+        return false;
+    }
     unsafe {
         if inputDesktopSelected() == FALSE {
             let res = selectInputDesktop() == TRUE;
@@ -1162,7 +1174,7 @@ pub(crate) struct CorporateConsoleConsent {
 }
 
 impl CorporateConsoleConsent {
-    fn current() -> Option<Self> {
+    pub(crate) fn current() -> Option<Self> {
         use winapi::um::winnt::{TokenStatistics, TOKEN_STATISTICS};
 
         #[link(name = "wtsapi32")]
@@ -1173,7 +1185,7 @@ impl CorporateConsoleConsent {
         let session = get_current_process_session_id()?;
         if session == 0
             || is_physical_console_session() != Some(true)
-            || is_locked()
+            || !corporate_user_desktop()
             || is_logon_ui().ok()? {
             return None;
         }
@@ -1200,6 +1212,27 @@ impl CorporateConsoleConsent {
     pub(crate) fn still_current(&self) -> bool {
         Self::current().as_ref() == Some(self)
     }
+}
+
+pub(crate) fn corporate_user_desktop() -> bool {
+    if is_physical_console_session() != Some(true) || is_locked() {
+        return false;
+    }
+    let desktop = unsafe { OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS) };
+    if desktop.is_null() {
+        return false;
+    }
+    let mut name = [0u16; 32];
+    let mut size = 0;
+    let result = unsafe {
+        let result = GetUserObjectInformationW(
+            desktop.cast(), UOI_NAME as i32, name.as_mut_ptr().cast(),
+            mem::size_of_val(&name) as u32, &mut size,
+        );
+        CloseDesktop(desktop);
+        result
+    };
+    result != FALSE && "Default".encode_utf16().chain(Some(0)).eq(name[..8].iter().copied())
 }
 
 pub(crate) fn request_corporate_console_consent(operator: &str, timeout: u32) -> Option<CorporateConsoleConsent> {

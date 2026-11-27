@@ -175,6 +175,13 @@ impl<T: InvokeUiSession> Remote<T> {
         .await
         {
             Ok(((mut peer, direct, pk, kcp, stream_type), (feedback, rendezvous_server))) => {
+                let corporate = self.handler.lc.read().unwrap().corporate.is_some();
+                if corporate && !peer.is_secured() {
+                    self.handler.on_establish_connection_error("Corporate secure handshake failed".into());
+                    return;
+                }
+                let mut corporate_pending = corporate;
+                let admission_deadline = Instant::now() + Duration::from_secs(30);
                 self.handler
                     .connection_round_state
                     .lock()
@@ -230,6 +237,23 @@ impl<T: InvokeUiSession> Remote<T> {
                                         break;
                                     }
                                     Ok(ref bytes) => {
+                                        if corporate {
+                                            let Ok(message) = Message::parse_from_bytes(bytes) else { break; };
+                                            match message.union {
+                                                Some(message::Union::LoginResponse(response)) if corporate_pending => match response.union {
+                                                    Some(login_response::Union::PeerInfo(_)) => corporate_pending = false,
+                                                    _ => {
+                                                        self.handler.msgbox("error", "Connection Error", "Corporate admission denied", "");
+                                                        break;
+                                                    }
+                                                },
+                                                Some(message::Union::Hash(_)) => break,
+                                                Some(message::Union::Misc(misc)) if corporate_pending && misc.has_permission_info() => {},
+                                                Some(message::Union::TestDelay(_)) if corporate_pending => continue,
+                                                _ if corporate_pending => break,
+                                                _ => {},
+                                            }
+                                        }
                                         last_recv_time = Instant::now();
                                         if !received {
                                             received = true;
@@ -254,10 +278,20 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                         d = self.receiver.recv() => {
                             if let Some(d) = d {
+                                if corporate_pending {
+                                    if matches!(&d, Data::Close) {
+                                        break;
+                                    }
+                                    continue;
+                                }
                                 if !self.handle_msg_from_ui(d, &mut peer).await {
                                     break;
                                 }
                             }
+                        }
+                        _ = time::sleep_until(admission_deadline), if corporate_pending => {
+                            self.handler.msgbox("error", "Connection Error", "Corporate admission timed out", "");
+                            break;
                         }
                         _msg = rx_clip_client.recv() => {
                             #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
@@ -543,6 +577,9 @@ impl<T: InvokeUiSession> Remote<T> {
                 return false;
             }
             Data::Login((os_username, os_password, password, remember)) => {
+                if self.handler.lc.read().unwrap().corporate.is_some() {
+                    return true;
+                }
                 self.handler
                     .handle_login_from_ui(os_username, os_password, password, remember, peer)
                     .await;

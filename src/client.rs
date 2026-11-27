@@ -253,6 +253,11 @@ impl Client {
         if config::is_incoming_only() {
             bail!("Incoming only mode");
         }
+        if interface.get_lch().read().unwrap().corporate.is_some()
+            && (hbb_common::is_ip_str(peer) || hbb_common::is_domain_port_str(peer))
+        {
+            bail!("Corporate admission requires a rendezvous-authenticated peer");
+        }
         // to-do: remember the port for each peer, so that we can retry easier
         if hbb_common::is_ip_str(peer) {
             return Ok((
@@ -573,8 +578,10 @@ impl Client {
                         let mut conn = conn?;
                         feedback = rr.feedback;
                         log::info!("{:?} used to establish {typ} connection", start.elapsed());
-                        let pk =
-                            Self::secure_connection(&peer, signed_id_pk, &key, &mut conn).await?;
+                        let corporate = interface.get_lch().read().unwrap().corporate.clone();
+                        let pk = Self::secure_connection(
+                            &peer, signed_id_pk, &key, &mut conn, corporate.as_ref(),
+                        ).await?;
                         return Ok((
                             (conn, typ == "IPv6", pk, kcp, typ),
                             (feedback, rendezvous_server),
@@ -741,7 +748,8 @@ impl Client {
             start.elapsed(),
             punch_type
         );
-        let res = Self::secure_connection(peer_id, signed_id_pk, key, &mut conn).await;
+        let corporate = interface.get_lch().read().unwrap().corporate.clone();
+        let res = Self::secure_connection(peer_id, signed_id_pk, key, &mut conn, corporate.as_ref()).await;
         let pk: Option<Vec<u8>> = match res {
             Ok(pk) => pk,
             Err(e) => {
@@ -760,7 +768,12 @@ impl Client {
         signed_id_pk: Vec<u8>,
         key: &str,
         conn: &mut Stream,
+        corporate: Option<&CorporateConnection>,
     ) -> ResultType<Option<Vec<u8>>> {
+        #[cfg(target_os = "ios")]
+        if corporate.is_some() {
+            bail!("Corporate admission is unavailable on iOS");
+        }
         let rs_pk = get_rs_pk(if key.is_empty() {
             config::RS_PUB_KEY
         } else {
@@ -784,6 +797,9 @@ impl Client {
         let sign_pk = match sign_pk {
             Some(v) => v,
             None => {
+                if corporate.is_some() {
+                    bail!("Corporate handshake requires an authenticated endpoint key");
+                }
                 // send an empty message out in case server is setting up secure and waiting for first message
                 conn.send(&Message::new()).await?;
                 return Ok(option_pk);
@@ -796,6 +812,9 @@ impl Client {
                     if let Some(message::Union::SignedId(si)) = msg_in.union {
                         if let Ok((id, their_pk_b)) = decode_id_pk(&si.id, &sign_pk) {
                             if id == peer_id {
+                                if corporate.is_some_and(|attempt| attempt.endpoint_key != sign_pk.0) {
+                                    bail!("Corporate endpoint key mismatch");
+                                }
                                 let (asymmetric_value, symmetric_value, key) =
                                     create_symmetric_key_msg(their_pk_b);
                                 let mut msg_out = Message::new();
@@ -805,6 +824,15 @@ impl Client {
                                     ..Default::default()
                                 });
                                 timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
+                                #[cfg(not(target_os = "ios"))]
+                                if let Some(attempt) = corporate {
+                                    let binding = crate::server::corporate_channel_binding(
+                                        &key, &hbb_common::sodiumoxide::crypto::box_::PublicKey(their_pk_b),
+                                    );
+                                    conn.set_key(key);
+                                    attempt.exchange(conn, binding.as_ref()).await?;
+                                    return Ok(option_pk);
+                                }
                                 conn.set_key(key);
                             } else {
                                 log::error!("Handshake failed: sign failure");
@@ -829,6 +857,9 @@ impl Client {
             None => {
                 bail!("Reset by the peer");
             }
+        }
+        if corporate.is_some() {
+            bail!("Corporate secure handshake failed");
         }
         Ok(option_pk)
     }
@@ -1725,9 +1756,108 @@ struct ConnToken {
     session_id: u64,
 }
 
+#[derive(Clone)]
+pub(crate) struct CorporateConnection {
+    pub(crate) device: uuid::Uuid,
+    pub(crate) endpoint_key: [u8; 32],
+    pub(crate) api: reqwest::Url,
+    pub(crate) operator: String,
+    pub(crate) mode: String,
+    pub(crate) token: String,
+}
+
+impl CorporateConnection {
+    async fn exchange(&self, conn: &mut Stream, binding: &[u8]) -> ResultType<()> {
+        #[derive(Deserialize)]
+        struct Proof {
+            operator: String,
+            mode: String,
+            connection_id: String,
+            handshake: String,
+            timestamp: u64,
+            signature: String,
+        }
+        let mut request = Message::new();
+        request.set_corporate_challenge_request(CorporateChallengeRequest {
+            protocol_version: 1,
+            channel_binding: binding.to_vec().into(),
+            operator: self.operator.clone(),
+            mode: self.mode.clone(),
+            ..Default::default()
+        });
+        timeout(CONNECT_TIMEOUT, conn.send(&request)).await??;
+        let challenge = timeout(READ_TIMEOUT, async {
+            for _ in 0..32 {
+                let bytes = conn.next().await.ok_or_else(|| hbb_common::anyhow::anyhow!("Corporate endpoint disconnected"))??;
+                match Message::parse_from_bytes(&bytes)?.union {
+                    Some(message::Union::CorporateChallenge(challenge)) => return Ok(challenge),
+                    Some(message::Union::Hash(_) | message::Union::TestDelay(_)) => {}
+                    Some(message::Union::Misc(misc)) if misc.has_permission_info() => {}
+                    _ => bail!("Unexpected corporate handshake response"),
+                }
+            }
+            bail!("Corporate challenge missing")
+        }).await??;
+        if challenge.device_id != self.device.to_string() || challenge.endpoint_key.as_ref() != self.endpoint_key
+            || challenge.issue_proof.len() > 1024 {
+            bail!("Corporate challenge endpoint mismatch");
+        }
+        let proof: Proof = serde_json::from_str(&challenge.issue_proof)?;
+        let connection = uuid::Uuid::from_slice(&binding[..16])?;
+        if proof.operator != self.operator || proof.mode != self.mode
+            || proof.connection_id != connection.to_string() || proof.handshake != hex::encode(binding)
+        {
+            bail!("Corporate challenge context mismatch");
+        }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+        if proof.timestamp > now || now - proof.timestamp >= 30 {
+            bail!("Corporate challenge expired");
+        }
+        let bytes = format!("YES Desk endpoint proof v1\nissue\n{}\n{}\n{}\n{}\n{}\n{}\n",
+            self.device, proof.operator, proof.mode, proof.connection_id, proof.handshake, proof.timestamp);
+        let signature = sign::Signature::from_bytes(&hex::decode(&proof.signature)?)
+            .map_err(|_| hbb_common::anyhow::anyhow!("Invalid corporate proof signature"))?;
+        if !sign::verify_detached(&signature, bytes.as_bytes(), &sign::PublicKey(self.endpoint_key)) {
+            bail!("Invalid corporate endpoint signature");
+        }
+        let mut url = self.api.clone();
+        url.path_segments_mut().map_err(|_| hbb_common::anyhow::anyhow!("Invalid Management URL"))?
+            .pop_if_empty().extend(["v2", "devices", challenge.device_id.as_str(), "session-grants"]);
+        let client = reqwest::Client::builder().https_only(true).no_proxy()
+            .redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(5)).build()?;
+        let response = client.post(url).bearer_auth(&self.token)
+            .header(reqwest::header::CONTENT_TYPE, "application/json").body(challenge.issue_proof).send().await
+            .map_err(|_| hbb_common::anyhow::anyhow!("Management grant request failed"))?;
+        if response.status().as_u16() != 201 {
+            bail!("Management denied the corporate grant");
+        }
+        let mut response = response;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if body.len() + chunk.len() > 4096 {
+                bail!("Invalid Management grant response");
+            }
+            body.extend_from_slice(&chunk);
+        }
+        #[derive(Deserialize)]
+        struct Grant { grant: String }
+        let grant: Grant = serde_json::from_slice(&body)?;
+        let mut message = Message::new();
+        message.set_corporate_access_request(CorporateAccessRequest {
+            protocol_version: 1,
+            channel_binding: binding.to_vec().into(),
+            grant: grant.grant,
+            ..Default::default()
+        });
+        timeout(CONNECT_TIMEOUT, conn.send(&message)).await??;
+        Ok(())
+    }
+}
+
 /// Login config handler for [`Client`].
 #[derive(Default)]
 pub struct LoginConfigHandler {
+    pub(crate) corporate: Option<CorporateConnection>,
     id: String,
     pub conn_type: ConnType,
     pub is_terminal_admin: bool,

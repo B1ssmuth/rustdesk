@@ -66,6 +66,10 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 #[cfg(windows)]
 use crate::virtual_display_manager;
 pub type Sender = mpsc::UnboundedSender<(Instant, Arc<Message>)>;
+#[cfg(windows)]
+const CORPORATE_INPUT_ACTIVE: u8 = 1;
+#[cfg(windows)]
+const CORPORATE_INPUT_CLOSED: u8 = 2;
 
 lazy_static::lazy_static! {
     static ref LOGIN_FAILURES: [Arc::<Mutex<HashMap<String, (i32, i32, i32)>>>; 2] = Default::default();
@@ -222,6 +226,9 @@ pub struct Connection {
     stream: super::Stream,
     corporate_channel_binding: Option<super::corporate_grant::Transport>,
     corporate_attempt: Option<super::corporate_grant::Attempt>,
+    corporate_grant_id: Option<String>,
+    #[cfg(windows)]
+    corporate_input: Arc<std::sync::atomic::AtomicU8>,
     ordinary_login_seen: bool,
     server: super::ServerPtrWeak,
     hash: Hash,
@@ -415,6 +422,9 @@ impl Connection {
             stream,
             corporate_channel_binding,
             corporate_attempt: None,
+            corporate_grant_id: None,
+            #[cfg(windows)]
+            corporate_input: Arc::default(),
             ordinary_login_seen: false,
             server,
             hash,
@@ -544,7 +554,13 @@ impl Connection {
         );
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
+        {
+            #[cfg(windows)]
+            let corporate_input = conn.corporate_input.clone();
+            std::thread::spawn(move || Self::handle_input(
+                _rx_input, tx_cloned, #[cfg(windows)] corporate_input,
+            ));
+        }
         let mut second_timer = crate::rustdesk_interval(time::interval(Duration::from_secs(1)));
 
         #[cfg(feature = "unix-file-copy-paste")]
@@ -574,6 +590,12 @@ impl Connection {
                 // biased; // video has higher priority // causing test_delay_timer failed while transferring big file
 
                 Some(data) = rx_from_cm.recv() => {
+                    if conn.corporate_grant_id.is_some()
+                        && !matches!(&data, ipc::Data::Close | ipc::Data::CmErr(_))
+                        && !matches!(&data, ipc::Data::SwitchPermission { name, enabled: false } if name == "keyboard")
+                    {
+                        continue;
+                    }
                     match data {
                         ipc::Data::Authorize => {
                             if conn.corporate_attempt.is_some() {
@@ -842,6 +864,9 @@ impl Connection {
                     }
                 }
                 Some((instant, value)) = rx_video.recv() => {
+                    if !conn.corporate_desktop_available() {
+                        break;
+                    }
                     if !conn.video_ack_required {
                         if let Some(message::Union::VideoFrame(vf)) = &value.union {
                             video_service::notify_video_frame_fetched(vf.display as usize, id, Some(instant.into()));
@@ -1017,7 +1042,11 @@ impl Connection {
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn handle_input(receiver: std_mpsc::Receiver<MessageInput>, tx: Sender) {
+    fn handle_input(
+        receiver: std_mpsc::Receiver<MessageInput>,
+        tx: Sender,
+        #[cfg(windows)] corporate_input: Arc<std::sync::atomic::AtomicU8>,
+    ) {
         let mut block_input_mode = false;
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
@@ -1027,7 +1056,14 @@ impl Connection {
         #[cfg(target_os = "macos")]
         reset_input_ondisconn();
         loop {
-            match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
+            let input = receiver.recv_timeout(std::time::Duration::from_millis(500));
+            #[cfg(windows)]
+            match corporate_input.load(Ordering::Acquire) {
+                CORPORATE_INPUT_CLOSED => break,
+                CORPORATE_INPUT_ACTIVE if !crate::platform::restrict_corporate_input() => break,
+                _ => {}
+            }
+            match input {
                 Ok(v) => match v {
                     MessageInput::Mouse(mouse_input) => {
                         handle_mouse(
@@ -1475,11 +1511,13 @@ impl Connection {
             self.tx_from_authed.clone(),
             self.lr.clone(),
         ));
-        self.session_last_recv_time = SESSIONS
-            .lock()
-            .unwrap()
-            .get(&self.session_key())
-            .map(|s| s.last_recv_time.clone());
+        if self.corporate_grant_id.is_none() {
+            self.session_last_recv_time = SESSIONS
+                .lock()
+                .unwrap()
+                .get(&self.session_key())
+                .map(|s| s.last_recv_time.clone());
+        }
         self.post_conn_audit(
             json!({"peer": ((&self.lr.my_id, &self.lr.my_name)), "type": conn_type}),
         );
@@ -1606,7 +1644,7 @@ impl Connection {
         #[allow(unused_mut)]
         let mut sas_enabled = false;
         #[cfg(windows)]
-        if crate::platform::is_root() {
+        if crate::platform::is_root() && self.corporate_grant_id.is_none() {
             sas_enabled = true;
         }
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1633,9 +1671,9 @@ impl Connection {
         pi.username = username;
         pi.sas_enabled = sas_enabled;
         pi.features = Some(Features {
-            privacy_mode: privacy_mode::is_privacy_mode_supported(),
+            privacy_mode: self.corporate_grant_id.is_none() && privacy_mode::is_privacy_mode_supported(),
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            terminal,
+            terminal: self.corporate_grant_id.is_none() && terminal,
             ..Default::default()
         })
         .into();
@@ -1644,7 +1682,7 @@ impl Connection {
         #[allow(unused_mut)]
         let mut wait_session_id_confirm = false;
         #[cfg(windows)]
-        if !self.terminal {
+        if !self.terminal && self.corporate_grant_id.is_none() {
             self.handle_windows_specific_session(&mut pi, &mut wait_session_id_confirm);
         }
         if self.file_transfer.is_some() || self.terminal {
@@ -1688,8 +1726,10 @@ impl Connection {
             self.last_supported_encoding = Some(supported_encoding.clone());
             log::info!("peer info supported_encoding: {:?}", supported_encoding);
             pi.encoding = Some(supported_encoding).into();
-            if let Some(msg_out) = super::display_service::is_inited_msg() {
-                self.send(msg_out).await;
+            if self.corporate_grant_id.is_none() {
+                if let Some(msg_out) = super::display_service::is_inited_msg() {
+                    self.send(msg_out).await;
+                }
             }
 
             try_activate_screen();
@@ -2236,6 +2276,10 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
+        if self.corporate_grant_id.is_some() &&
+            (!self.corporate_desktop_available() || !corporate_desktop_message(&msg)) {
+            return false;
+        }
         if let Some(denial) = self.process_corporate(&msg).await {
             log::warn!("Corporate access rejected on connection {}: {:?}", self.inner.id(), denial);
             let error = if denial == CorporateDenial::UnboundTransport {
@@ -3320,7 +3364,6 @@ impl Connection {
     }
 
     async fn process_corporate(&mut self, msg: &Message) -> Option<CorporateDenial> {
-        use super::corporate_grant;
         use CorporateDenial::*;
         match &msg.union {
             Some(message::Union::CorporateChallengeRequest(request)) => {
@@ -3356,15 +3399,66 @@ impl Connection {
                 let Some(attempt) = self.corporate_attempt.take() else {
                     return Some(GrantContextMismatch);
                 };
-                Some(match corporate_grant::redeem(&request.grant, transport, attempt).await {
-                    Ok(()) => EndpointAdmissionUnavailable,
-                    Err(denial) => denial,
-                })
+                if self.require_2fa.is_some() {
+                    return Some(LocalPolicyDenied);
+                }
+                let decision = tokio::select! {
+                    biased;
+                    _ = self.stream.next() => return Some(GrantContextMismatch),
+                    decision = corporate_grant::redeem(&request.grant, transport, attempt) => decision,
+                };
+                match decision {
+                    Ok(admission) => {
+                        if self.admit_corporate(admission).await {
+                            None
+                        } else {
+                            Some(EndpointAdmissionUnavailable)
+                        }
+                    }
+                    Err(denial) => Some(denial),
+                }
             }
             Some(message::Union::CorporateChallenge(_)) => Some(GrantContextMismatch),
             _ if self.corporate_attempt.is_some() => Some(GrantContextMismatch),
             _ => None,
         }
+    }
+
+    fn corporate_desktop_available(&self) -> bool {
+        #[cfg(windows)]
+        if self.corporate_grant_id.is_some() {
+            return crate::platform::corporate_user_desktop();
+        }
+        true
+    }
+
+    async fn admit_corporate(&mut self, admission: corporate_grant::Admission) -> bool {
+        self.lr.my_id = format!("corporate:{}", admission.grant_id);
+        self.corporate_grant_id = Some(admission.grant_id);
+        if !self.corporate_desktop_available() {
+            return false;
+        }
+        self.lr.my_name = admission.operator;
+        self.clipboard = false;
+        self.audio = false;
+        self.file = false;
+        self.restart = false;
+        self.recording = false;
+        self.block_input = false;
+        #[cfg(windows)]
+        self.corporate_input.store(CORPORATE_INPUT_ACTIVE, Ordering::Release);
+        for permission in [Permission::Clipboard, Permission::Audio, Permission::File,
+            Permission::Restart, Permission::Recording, Permission::BlockInput] {
+            self.send_permission(permission, false).await;
+        }
+        if !self.send_logon_response_and_keep_alive().await || !self.services_subed {
+            return false;
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        self.try_start_cm_ipc();
+        self.try_start_cm(self.lr.my_id.clone(), self.lr.my_name.clone(), true);
+        self.post_conn_audit(json!({"action": "corporate_admit", "grant_id": self.corporate_grant_id}));
+        true
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -4263,6 +4357,11 @@ impl Connection {
             return;
         }
         self.closed = true;
+        if let Some(grant_id) = &self.corporate_grant_id {
+            #[cfg(windows)]
+            self.corporate_input.store(CORPORATE_INPUT_CLOSED, Ordering::Release);
+            self.post_conn_audit(json!({"action": "corporate_close", "grant_id": grant_id, "reason": reason}));
+        }
         // If voice A,B -> C, and A,B has voice call
         // B disconnects, C will reset the voice call input.
         //
@@ -4907,6 +5006,18 @@ fn verify_corporate_channel<'a>(
     Ok(transport)
 }
 
+fn corporate_desktop_message(msg: &Message) -> bool {
+    match &msg.union {
+        Some(message::Union::MouseEvent(_) | message::Union::KeyEvent(_)
+            | message::Union::PointerDeviceEvent(_) | message::Union::TestDelay(_)) => true,
+        Some(message::Union::Misc(misc)) => matches!(&misc.union,
+            Some(misc::Union::CloseReason(_) | misc::Union::SwitchDisplay(_)
+                | misc::Union::RefreshVideo(_) | misc::Union::RefreshVideoDisplay(_)
+                | misc::Union::VideoReceived(_))),
+        _ => false,
+    }
+}
+
 fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
     match msg.union.as_ref() {
         Some(message::Union::SwitchSidesResponse(_)) => Some(LegacySwitch::ReverseLogin),
@@ -4920,6 +5031,19 @@ fn legacy_switch_message(msg: &Message) -> Option<LegacySwitch> {
 #[cfg(test)]
 mod switch_sides_tests {
     use super::*;
+
+    #[test]
+    fn corporate_desktop_does_not_accept_a_second_login_or_grant() {
+        let mut msg = Message::new();
+        msg.set_login_request(LoginRequest::new());
+        assert!(!corporate_desktop_message(&msg));
+        msg.set_corporate_access_request(CorporateAccessRequest::new());
+        assert!(!corporate_desktop_message(&msg));
+        msg.set_auth_2fa(Auth2FA::new());
+        assert!(!corporate_desktop_message(&msg));
+        msg.set_key_event(KeyEvent::new());
+        assert!(corporate_desktop_message(&msg));
+    }
 
     #[test]
     fn corporate_wire_request_requires_the_current_supported_channel() {

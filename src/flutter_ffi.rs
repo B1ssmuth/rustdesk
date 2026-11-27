@@ -183,6 +183,41 @@ pub fn session_start(
     session_start_(&session_id, &id, events2ui)
 }
 
+pub fn session_add_corporate_sync(
+    session_id: SessionID,
+    id: String,
+    device_id: String,
+    endpoint_key_hex: String,
+    management_url: String,
+    operator: String,
+    mode: String,
+    access_token: String,
+) -> SyncReturn<String> {
+    let result = (|| -> ResultType<()> {
+        let api = reqwest::Url::parse(&management_url)?;
+        if api.scheme() != "https" || api.host().is_none() || api.query().is_some()
+            || api.fragment().is_some() || api.password().is_some() || !api.username().is_empty()
+            || !matches!(mode.as_str(), "consent" | "unattended") {
+            hbb_common::bail!("Invalid corporate connection parameters");
+        }
+        let mut endpoint_key = [0; 32];
+        hex::decode_to_slice(endpoint_key_hex, &mut endpoint_key)?;
+        let corporate = crate::client::CorporateConnection {
+            device: uuid::Uuid::parse_str(&device_id)?,
+            endpoint_key,
+            api,
+            operator,
+            mode,
+            token: access_token,
+        };
+        let session = session_add(&session_id, &id, false, false, false, false, false,
+            "", false, String::new(), false, None)?;
+        session.lc.write().unwrap().corporate = Some(corporate);
+        Ok(())
+    })();
+    SyncReturn(if result.is_ok() { String::new() } else { "Failed to create corporate session".to_owned() })
+}
+
 pub fn session_start_with_displays(
     events2ui: StreamSink<EventToUI>,
     session_id: SessionID,

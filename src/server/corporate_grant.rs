@@ -246,6 +246,11 @@ pub(super) struct Attempt {
     deadline: std::time::Instant,
 }
 
+pub(super) struct Admission {
+    pub(super) operator: String,
+    pub(super) grant_id: String,
+}
+
 pub(super) fn challenge(
     request: &hbb_common::message_proto::CorporateChallengeRequest,
     transport: &Transport,
@@ -314,7 +319,7 @@ pub(super) async fn redeem(
     grant: &str,
     transport: &Transport,
     attempt: Attempt,
-) -> Result<(), CorporateDenial> {
+) -> Result<Admission, CorporateDenial> {
     use CorporateDenial::*;
     let (trust, _) = load_endpoint()?;
     let claims = check_grant(grant, transport, &trust, epoch()?)?;
@@ -325,7 +330,7 @@ pub(super) async fn redeem(
         return Err(GrantContextMismatch);
     }
     #[cfg(windows)]
-    let consent = if claims.mode == Mode::Consent {
+    let console = if claims.mode == Mode::Consent {
         let remaining = claims
             .exp
             .saturating_sub(epoch()?)
@@ -340,9 +345,9 @@ pub(super) async fn redeem(
         })
         .await
         .map_err(|_| LocalConsentUnavailable)?;
-        Some(answer.ok_or(LocalConsentUnavailable)?)
+        answer.ok_or(LocalConsentUnavailable)?
     } else {
-        None
+        crate::platform::CorporateConsoleConsent::current().ok_or(LocalPolicyDenied)?
     };
     #[cfg(not(windows))]
     if claims.mode == Mode::Consent {
@@ -351,10 +356,7 @@ pub(super) async fn redeem(
     let (trust, mut api) = load_endpoint()?;
     check_grant(grant, transport, &trust, epoch()?)?;
     #[cfg(windows)]
-    if consent
-        .as_ref()
-        .is_some_and(|decision| !decision.still_current())
-    {
+    if !console.still_current() {
         return Err(LocalConsentUnavailable);
     }
     api.path_segments_mut()
@@ -387,10 +389,13 @@ pub(super) async fn redeem(
     let (trust, _) = load_endpoint()?;
     check_grant(grant, transport, &trust, epoch()?)?;
     #[cfg(windows)]
-    if consent.is_some_and(|decision| !decision.still_current()) {
+    if !console.still_current() {
         return Err(LocalConsentUnavailable);
     }
-    Ok(())
+    if std::time::Instant::now() >= attempt.deadline {
+        return Err(InvalidGrant);
+    }
+    Ok(Admission { operator: claims.sub, grant_id: claims.jti })
 }
 
 #[cfg(test)]
