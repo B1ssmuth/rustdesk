@@ -24,26 +24,7 @@ try {
     Invoke-BuildCommand $dotnet @('build', (Join-Path $PSScriptRoot 'msi\Agent.wixproj'),
         '-c', 'Release', '-o', $packages, "-p:AgentOutput=$agent", "-p:RestoreSources=$source")
     $msi = Get-Item -LiteralPath (Join-Path $packages 'YESDesk-Agent-x64.msi')
-    function Assert-AgentMsi([string] $Path) {
-        $installer = New-Object -ComObject WindowsInstaller.Installer
-        try {
-            $db = $installer.GetType().InvokeMember('OpenDatabase','InvokeMethod',$null,$installer,@($Path,0))
-            try {
-                if ((Get-MsiStrings $db 'SELECT `Name` FROM `ServiceInstall`') -ne 'YESDeskAgent' -or
-                    (Get-MsiStrings $db 'SELECT `Name` FROM `ServiceControl`') -ne 'YESDeskAgent' -or
-                    (Get-MsiStrings $db 'SELECT `FileName` FROM `File`') -notmatch 'YesDeskAgent\.exe$') {
-                    throw 'Unexpected MSI service or file manifest.'
-                }
-                $summary = $db.GetType().InvokeMember('SummaryInformation','GetProperty',$null,$db,@(0))
-                try {
-                    if ($summary.GetType().InvokeMember('Property','GetProperty',$null,$summary,@(7)) -notmatch '^x64;') {
-                        throw 'Expected an x64 installer.'
-                    }
-                } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($summary) }
-            } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($db) }
-        } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer) }
-    }
-    Assert-AgentMsi $msi.FullName
+    Assert-YesDeskAgentMsi $msi.FullName
     $checksum = (Get-FileHash -LiteralPath $msi.FullName).Hash.ToLowerInvariant()
     "$checksum  $($msi.Name)" | Set-Content -LiteralPath (Join-Path $packages 'SHA256SUMS.txt') -Encoding ascii
     Write-Host "Verified Windows service MSI: $($msi.FullName)"

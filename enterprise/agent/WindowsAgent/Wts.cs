@@ -40,21 +40,26 @@ static class Wts
             {
                 var entry = Marshal.PtrToStructure<Entry>(buffer + i * Marshal.SizeOf<Entry>());
                 if (entry.Id == 0 || entry.State is 6 or 7 or 8 or 9) continue;
-                if (!Query(IntPtr.Zero, entry.Id, 24, out var data, out var size)) return null;
+                if (!Query(IntPtr.Zero, entry.Id, 24, out var data, out var size)) continue;
                 Info info;
                 try
                 {
-                    if (size < Marshal.SizeOf<Info>()) return null;
+                    if (size < Marshal.SizeOf<Info>()) continue;
                     info = Marshal.PtrToStructure<Info>(data);
                 }
                 finally { WTSFreeMemory(data); }
-                if (info.Id != entry.Id) return null;
-                if (info.LogonTime <= 0 || string.IsNullOrWhiteSpace(info.Username)) continue;
-                if (!WTSQueryUserToken((uint)entry.Id, out var token)) return null;
+                if (info.Id != entry.Id || info.LogonTime <= 0 ||
+                    info.LogonTime > DateTime.MaxValue.ToFileTimeUtc() ||
+                    string.IsNullOrWhiteSpace(info.Username)) continue;
+                if (!WTSQueryUserToken((uint)entry.Id, out var token))
+                {
+                    token?.Dispose();
+                    continue;
+                }
                 using (token)
                 using (var user = new WindowsIdentity(token.DangerousGetHandle()))
                 {
-                    if (user.User is null) return null;
+                    if (user.User is not { } sid) continue;
                     var transport = "unknown";
                     if (Query(IntPtr.Zero, entry.Id, 16, out var protocol, out var bytes))
                     {
@@ -65,7 +70,9 @@ static class Wts
                         }
                         finally { WTSFreeMemory(protocol); }
                     }
-                    sessions.Add(new(entry.Id, user.User.Value, user.Name, DateTimeOffset.FromFileTime(info.LogonTime),
+                    var name = string.IsNullOrWhiteSpace(info.Domain)
+                        ? info.Username : $@"{info.Domain}\{info.Username}";
+                    sessions.Add(new(entry.Id, sid.Value, name, DateTimeOffset.FromFileTime(info.LogonTime),
                         transport, info.State switch { 0 => "active", 1 => "connected", 4 => "disconnected", _ => "other" }));
                 }
             }

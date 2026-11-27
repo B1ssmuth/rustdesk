@@ -10,6 +10,9 @@ param(
 $ErrorActionPreference = 'Stop'
 if (!$IsWindows -or !$Api.IsAbsoluteUri -or $Api.Scheme -ne 'https' -or $Api.UserInfo -or
     $Api.Query -or $Api.Fragment) { throw 'An approved HTTPS Management API URL is required.' }
+if (!(Get-CimInstance -ClassName Win32_ComputerSystem).PartOfDomain) {
+    throw 'The inventory agent requires a managed, domain-joined computer.'
+}
 if ($Broker -and ($EnrollmentCode -or !$CertificateIssuer -or !$Broker.IsAbsoluteUri -or
     $Broker.Scheme -ne 'https' -or $Broker.UserInfo -or $Broker.Query -or $Broker.Fragment)) {
     throw 'Certificate enrollment requires HTTPS and an approved issuer without a manual code.'

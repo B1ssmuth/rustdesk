@@ -77,6 +77,34 @@ function Assert-YesDeskMsi([string] $Path, [string] $Version) {
     }
 }
 
+function Assert-YesDeskAgentMsi([string] $Path) {
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    try {
+        $database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($Path, 0))
+        try {
+            $files = @(Get-MsiStrings $database 'SELECT `FileName` FROM `File`' | ForEach-Object { ($_ -split '\|')[-1] })
+            $services = @(Get-MsiStrings $database 'SELECT `Name` FROM `ServiceInstall`')
+            $controls = @(Get-MsiStrings $database 'SELECT `Name` FROM `ServiceControl`')
+            if ($files.Count -ne 1 -or $files[0] -ne 'YesDeskAgent.exe' -or
+                $services.Count -ne 1 -or $services[0] -ne 'YESDeskAgent' -or
+                $controls.Count -ne 1 -or $controls[0] -ne 'YESDeskAgent') {
+                throw 'The agent MSI must own only YESDeskAgent and contain only its executable.'
+            }
+            $summary = $database.GetType().InvokeMember('SummaryInformation', 'GetProperty', $null, $database, @(0))
+            try {
+                $template = $summary.GetType().InvokeMember('Property', 'GetProperty', $null, $summary, @(7))
+                if ($template -notmatch '^x64;') { throw "Agent MSI is not x64 (template '$template')." }
+            } finally {
+                [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($summary)
+            }
+        } finally {
+            [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
+        }
+    } finally {
+        [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer)
+    }
+}
+
 function Assert-EmbeddedMsi([string] $Payload, [string] $Portable, [string] $MsiHash) {
     # The packer includes data.bin unchanged. Verify its presence before inspecting its records.
     $payloadBytes = [IO.File]::ReadAllBytes($Payload)

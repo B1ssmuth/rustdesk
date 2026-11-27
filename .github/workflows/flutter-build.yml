@@ -34,7 +34,7 @@ env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836"
-  VERSION: "1.4.6"
+  VERSION: "1.4.7"
   NDK_VERSION: "r28c"
 
 jobs:
@@ -78,6 +78,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build and verify the standalone YES Desk Agent MSI
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $agent = Join-Path $env:RUNNER_TEMP 'yesdesk-agent-publish'
+          $packages = Join-Path $env:RUNNER_TEMP 'yesdesk-agent-msi'
+          dotnet publish ./enterprise/agent/WindowsAgent/WindowsAgent.csproj -c Release -o $agent
+          dotnet build ./enterprise/agent/msi/Agent.wixproj -c Release -o $packages "-p:AgentOutput=$agent"
+          . ./scripts/windows-build-verify.ps1
+          Assert-YesDeskAgentMsi (Join-Path $packages 'YESDesk-Agent-x64.msi')
 
       - name: Restore bridge files
         uses: actions/download-artifact@master

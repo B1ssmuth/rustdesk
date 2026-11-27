@@ -13,7 +13,7 @@ using System.Text.Json;
 
 if (args is ["--version"])
 {
-    Console.WriteLine("YES Desk Windows Agent 1.0.1");
+    Console.WriteLine("YES Desk Windows Agent 1.0.2");
     return;
 }
 ServiceBase.Run(new AgentService());
@@ -61,9 +61,11 @@ sealed class AgentService : ServiceBase
                 var config = ReadConfig();
                 var guid = Guid.Parse((string)Registry.GetValue(
                     @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography", "MachineGuid", "")!);
+                var machine = Wmi("SELECT Model,Domain,TotalPhysicalMemory,PartOfDomain FROM Win32_ComputerSystem",
+                    "Model", "Domain", "TotalPhysicalMemory", "PartOfDomain");
+                if (!bool.TryParse(machine[3], out var domainJoined) || !domainJoined)
+                    throw new InvalidDataException("Inventory requires a domain-joined computer.");
                 var token = await CredentialAsync(client, config, guid, stop.Token);
-                var machine = Wmi("SELECT Model,Domain,TotalPhysicalMemory FROM Win32_ComputerSystem",
-                    "Model", "Domain", "TotalPhysicalMemory");
                 var cpu = Wmi("SELECT Name FROM Win32_Processor", "Name");
                 var os = Wmi("SELECT Caption,Version FROM Win32_OperatingSystem", "Caption", "Version");
                 var disks = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
@@ -75,7 +77,7 @@ sealed class AgentService : ServiceBase
                     MachineGuid = guid, Hostname = Environment.MachineName, Domain = machine[1],
                     Model = machine[0], RamBytes = long.Parse(machine[2]), Cpu = cpu[0],
                     Os = $"{os[0]} {os[1]}", Disks = disks, Sessions = Wts.Snapshot(),
-                    AgentVersion = "1.0.1",
+                    AgentVersion = "1.0.2",
                     Addresses = NetworkInterface.GetAllNetworkInterfaces()
                         .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up)
                         .SelectMany(adapter => adapter.GetIPProperties().UnicastAddresses)
