@@ -1,0 +1,11 @@
+services:
+  api:
+    environment:
+      YESDESK_CORPORATE_PILOT_DEVICE: ${YESDESK_CORPORATE_PILOT_DEVICE:?Set the approved pilot machine GUID}
+      YESDESK_CORPORATE_SIGNING_KEY_FILE: /run/secrets/corporate_signing_key
+    secrets:
+      - corporate_signing_key
+
+secrets:
+  corporate_signing_key:
+    file: ${YESDESK_CORPORATE_SIGNING_KEY_PATH:?Set the protected signer PEM path}
