@@ -74,6 +74,19 @@ class RustdeskImpl {
     return '';
   }
 
+  String sessionAddCorporateSync(
+      {required UuidValue sessionId,
+      required String id,
+      required String deviceId,
+      required String endpointKeyHex,
+      required String managementUrl,
+      required String operator,
+      required String mode,
+      required String accessToken,
+      dynamic hint}) {
+    throw UnsupportedError('Corporate sessions require the Windows client');
+  }
+
   String sessionAddSync(
       {required UuidValue sessionId,
       required String id,

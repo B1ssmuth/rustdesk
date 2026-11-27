@@ -17,7 +17,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, IPvAnyAddress,
 
 from settings import database_url, https_url
 from local_auth import install_routes, key
-from corporate_grants import configured_signer, install_grant_routes
+from corporate_grants import configured_signer, endpoint_key, install_grant_routes
 
 
 class Payload(BaseModel):
@@ -152,7 +152,7 @@ def role_for(groups, dns):
 
 
 def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_max_age=1800,
-               enrolled_agents=False, corporate_signer=None):
+               enrolled_agents=False, corporate_signer=None, pilot_device=None):
     if issuer and (not all(groups.values()) or len(set(groups.values())) != 3):
         raise ValueError("Configure three distinct AD group DNs")
     if not 60 <= directory_max_age <= 3600:
@@ -162,7 +162,19 @@ def create_app(issuer, audience, jwks_url, groups, test_agents=False, directory_
     bearer = HTTPBearer()
     Db = Annotated[psycopg.Connection, Depends(get_db)]
     Credential = Annotated[HTTPAuthorizationCredentials, Depends(bearer)]
-    install_routes(app, get_db, bearer)
+    def pilot_identity(db, device_id):
+        if corporate_signer is None or device_id != pilot_device:
+            return None
+        enrolled = endpoint_key(db, device_id)
+        if not enrolled:
+            return None
+        device = db.execute("SELECT yesdesk_id FROM devices WHERE id=%s AND agent_hash=%s",
+                            (device_id, enrolled["agent_hash"])).fetchone()
+        if device:
+            return {"device_id": str(device_id), "yesdesk_id": device["yesdesk_id"],
+                    "endpoint_key": bytes(enrolled["public_key"]).hex()}
+
+    install_routes(app, get_db, bearer, pilot_identity)
     if corporate_signer is not None:
         if not enrolled_agents:
             raise ValueError("Corporate grants require Windows agent enrollment")
@@ -521,9 +533,11 @@ def production_app():
     groups = {role: os.environ[f"YESDESK_{role.upper()}_DN"]
               for role in ("admin", "support", "user")} if legacy else {}
     key()
+    pilot = os.environ.get("YESDESK_CORPORATE_PILOT_DEVICE")
     return create_app(https_url("YESDESK_ISSUER") if legacy else None, os.environ.get("YESDESK_AUDIENCE"),
                       https_url("YESDESK_JWKS_URL") if legacy else None, groups,
                       test_agents=os.environ.get("YESDESK_ENV") == "test",
                       enrolled_agents=os.environ.get("YESDESK_WINDOWS_AGENTS") == "1",
                       corporate_signer=configured_signer(),
+                      pilot_device=UUID(pilot) if pilot else None,
                       directory_max_age=int(os.environ.get("YESDESK_DIRECTORY_MAX_AGE", "1800")))

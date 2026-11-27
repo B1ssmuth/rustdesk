@@ -103,6 +103,7 @@ class PostgresTests(unittest.TestCase):
             mfa_file.write_bytes(Fernet.generate_key())
             with patch.dict(os.environ, {
                 "YESDESK_CORPORATE_SIGNING_KEY_FILE": str(key_file), "YESDESK_WINDOWS_AGENTS": "1",
+                "YESDESK_CORPORATE_PILOT_DEVICE": self.device,
                 "YESDESK_LEGACY_OIDC": "0", "YESDESK_MFA_KEY_FILE": str(mfa_file),
             }):
                 client = TestClient(production_app())
@@ -158,6 +159,11 @@ class PostgresTests(unittest.TestCase):
 
             self.assertEqual(client.get("/health/ready").status_code, 200)
             self.assertEqual(client.post(f"/v2/devices/{device}/connection", headers=auth).status_code, 501)
+            options = client.get(f"/v2/devices/{device}/connection-options", headers=auth).json()
+            self.assertTrue(options["attended"]["available"])
+            self.assertFalse(options["unattended"]["available"])
+            self.assertEqual(options["launch"]["endpoint_key"], host.public_key().public_bytes_raw().hex())
+            self.assertNotIn("launch", client.get(f"/v2/devices/{uuid4()}/connection-options", headers=auth).json())
             context, grant = issue()
             with self.subTest("tampered grant signature"):
                 head, payload, signature = grant.split(".")

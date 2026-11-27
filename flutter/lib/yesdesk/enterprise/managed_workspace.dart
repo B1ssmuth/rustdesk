@@ -3,6 +3,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../common.dart' show isWindows;
+import '../../desktop/pages/remote_page.dart';
+import '../../desktop/widgets/remote_toolbar.dart';
+import '../../models/model.dart' show ConnType;
+import '../../models/platform_model.dart';
 import '../ssh/widgets/ssh_strings.dart';
 import 'corporate_session.dart';
 
@@ -40,6 +45,7 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
   late Future<dynamic> _data;
   String? _notice;
   bool _treeVisible = false;
+  bool _launching = false;
   WorkspaceApi get request => widget.api ?? corporateSession.api;
   String t(String en, String ru) => SshStrings(widget.language).text(en, ru);
 
@@ -233,14 +239,49 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
         ));
   }
 
+  Future<void> _launch(String mode) async {
+    final device = _selected?['device_id'];
+    if (!isWindows || _launching || device is! String) return;
+    setState(() => _launching = true);
+    try {
+      final options = await request('/v2/devices/$device/connection-options');
+      if (!mounted || _selected?['device_id'] != device) return;
+      final policy = mode == 'consent' ? 'attended' : 'unattended';
+      final launch = options['launch'];
+      if (options[policy]?['available'] != true ||
+          launch is! Map ||
+          launch['device_id'] != device) {
+        throw StateError('Corporate launch unavailable');
+      }
+      final peer = launch['yesdesk_id'] as String;
+      if (bind.peerGetSessionsCount(
+              id: peer, connType: ConnType.defaultConn.index) >
+          0) {
+        throw StateError('Close the existing session first');
+      }
+      final session = corporateSession.prepareConnection(
+          deviceId: device,
+          peerId: peer,
+          endpointKey: launch['endpoint_key'] as String,
+          mode: mode);
+      await Navigator.of(context).push<void>(MaterialPageRoute(
+          builder: (_) => RemotePage(
+              id: peer,
+              toolbarState: ToolbarState(),
+              sessionId: session,
+              corporateSessionPrepared: true)));
+    } catch (_) {
+      if (mounted)
+        setState(() => _notice = t('Could not start corporate connection.',
+            'Не удалось начать корпоративное подключение.'));
+    } finally {
+      if (mounted) setState(() => _launching = false);
+    }
+  }
+
   Widget _connectionActions() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          FilledButton(
-              onPressed: null, child: Text(t('Connect', 'Подключиться'))),
-          Text(t(
-              'Corporate connection is unavailable until the receiving device verifies permission.',
-              'Корпоративное подключение недоступно до проверки разрешений на принимающем устройстве.')),
           if (_connectionOptions != null)
             FutureBuilder<dynamic>(
               future: _connectionOptions,
@@ -250,16 +291,29 @@ class _ManagedWorkspaceState extends State<ManagedWorkspace> {
                       'Политика доступа недоступна.'));
                 }
                 final options = snapshot.data;
-                if (options is! Map) return const SizedBox.shrink();
+                final consent = isWindows &&
+                    options is Map &&
+                    options['attended']?['available'] == true;
+                final unattended = isWindows &&
+                    options is Map &&
+                    options['unattended']?['available'] == true;
                 return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (options['attended']?['eligible'] == true)
-                        Text(t('With confirmation · blocked on endpoint',
-                            'С подтверждением · заблокировано на получателе')),
-                      if (options['unattended']?['eligible'] == true)
-                        Text(t('Corporate access · blocked on endpoint',
-                            'Корпоративный доступ · заблокировано на получателе')),
+                      FilledButton(
+                          onPressed: consent && !_launching
+                              ? () => _launch('consent')
+                              : null,
+                          child: Text(t('Connect', 'Подключиться'))),
+                      if (unattended)
+                        OutlinedButton(
+                            onPressed:
+                                _launching ? null : () => _launch('unattended'),
+                            child: Text(t('Connect unattended',
+                                'Подключиться без подтверждения'))),
+                      if (!consent && !unattended)
+                        Text(t('Corporate connection is unavailable.',
+                            'Корпоративное подключение недоступно.')),
                     ]);
               },
             ),

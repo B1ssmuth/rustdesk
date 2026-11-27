@@ -45,6 +45,7 @@ class RemotePage extends StatefulWidget {
     this.switchUuid,
     this.forceRelay,
     this.isSharedPassword,
+    this.corporateSessionPrepared = false,
   }) : super(key: key) {
     initSharedStates(id);
   }
@@ -59,6 +60,7 @@ class RemotePage extends StatefulWidget {
   final String? switchUuid;
   final bool? forceRelay;
   final bool? isSharedPassword;
+  final bool corporateSessionPrepared;
   final SimpleWrapper<State<RemotePage>?> _lastState = SimpleWrapper(null);
   final DesktopTabController? tabController;
 
@@ -130,6 +132,7 @@ class _RemotePageState extends State<RemotePage>
     _ffi.canvasModel.initializeEdgeScrollFallback(this);
     _ffi.start(
       widget.id,
+      corporateSessionPrepared: widget.corporateSessionPrepared,
       password: widget.password,
       isSharedPassword: widget.isSharedPassword,
       switchUuid: widget.switchUuid,

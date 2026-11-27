@@ -45,8 +45,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Pilot PC'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('With confirmation'), findsOneWidget);
-    expect(find.textContaining('Corporate access · blocked'), findsOneWidget);
+    expect(find.text('Corporate connection is unavailable.'), findsOneWidget);
     final connect = find.widgetWithText(FilledButton, 'Connect');
     expect(tester.widget<FilledButton>(connect).onPressed, isNull);
     expect(calls.where((call) => call.startsWith('POST ')), isEmpty);

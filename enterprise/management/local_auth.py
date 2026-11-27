@@ -156,7 +156,7 @@ def limit_attempt(db, username):
     db.commit()
 
 
-def install_routes(app, get_db, bearer):
+def install_routes(app, get_db, bearer, pilot_identity):
     Db = Annotated[psycopg.Connection, Depends(get_db)]
     Cred = Annotated[HTTPAuthorizationCredentials, Depends(bearer)]
 
@@ -465,10 +465,11 @@ def install_routes(app, get_db, bearer):
     @app.get("/v2/devices/{device_id}/connection-options")
     def options(device_id: UUID, db: Db, user: Annotated[dict, Depends(directory)]):
         policy = connection_policy(db, user, device_id)
+        launch = pilot_identity(db, device_id) if any(policy.values()) else None
         return {
-            "attended": {"eligible": policy["attended"], "available": False},
-            "unattended": {"eligible": policy["unattended"], "available": False},
-            "reason": "endpoint_verification_unavailable",
+            "attended": {"eligible": policy["attended"], "available": bool(launch and policy["attended"])},
+            "unattended": {"eligible": policy["unattended"], "available": bool(launch and policy["unattended"])},
+            **({"launch": launch} if launch else {"reason": "endpoint_verification_unavailable"}),
         }
 
     @app.put("/v2/devices/{device_id}/corporate-policy")

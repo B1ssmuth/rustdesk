@@ -4,6 +4,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../models/platform_model.dart';
 
 final corporateSession = CorporateSession();
 
@@ -31,6 +34,31 @@ class CorporateSession extends ChangeNotifier {
 
   bool get isAdmin => _profile?['role'] == 'admin';
   bool get canReadDirectory => isAdmin || _profile?['role'] == 'support';
+
+  UuidValue prepareConnection({
+    required String deviceId,
+    required String peerId,
+    required String endpointKey,
+    required String mode,
+  }) {
+    final token = _token;
+    final operator = _profile?['username'];
+    if (!configured || token == null || operator is! String) {
+      throw StateError('Corporate sign-in required');
+    }
+    final session = const Uuid().v4obj();
+    final error = bind.sessionAddCorporateSync(
+        sessionId: session,
+        id: peerId,
+        deviceId: deviceId,
+        endpointKeyHex: endpointKey,
+        managementUrl: _api,
+        operator: operator,
+        mode: mode,
+        accessToken: token);
+    if (error.isNotEmpty) throw StateError('Corporate session unavailable');
+    return session;
+  }
 
   Future<void> signIn(String username, String password, String code) async {
     if (!configured || signingIn) return;
